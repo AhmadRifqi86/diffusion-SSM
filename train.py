@@ -18,6 +18,9 @@ from model_v2 import UShapeMambaDiffusion
 import numpy as np
 from collections import deque
 
+#pip install -e . --no-build-isolation   #Clone repo mamba-ssm habis itu pip install tanpa build isolation
+
+
 
 class DummyDataset(torch.utils.data.Dataset):
     def __init__(self, num_samples=1000, image_size=512):
