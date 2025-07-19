@@ -432,7 +432,7 @@ def main(): #test annotation nya gaada
         'learning_rate': 1e-4,
         'weight_decay': 0.01,
         'num_epochs': 250,  # Increased for better training schedule
-        'batch_size': 2,
+        'batch_size': 4,
         'image_size': 256,
         'num_workers': 2,
         'patience': 20,  # Early stopping patience

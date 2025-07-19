@@ -9,6 +9,17 @@ import inspect
 # Import pre-trained models
 from diffusers import AutoencoderKL
 from transformers import CLIPTextModel, CLIPTokenizer
+
+# Import official Mamba implementation
+try:
+    from mamba_ssm import Mamba
+    MAMBA_AVAILABLE = True
+    print("Using official Mamba implementation from mamba-ssm")
+except ImportError:
+    MAMBA_AVAILABLE = False
+    print("Warning: mamba-ssm not available, falling back to custom implementation")
+    print("Install with: pip install mamba-ssm")
+
 #import clip
 
 DEBUG = False
@@ -51,118 +62,10 @@ def print_forward_shapes(forward_fn):
         return output
     return wrapper
 
-class ParallelScan:
-    """
-    Implements parallel scan (prefix sum) operation for Mamba's selective scan.
-    This version avoids in-place modifications to support autograd.
-    """
-
-    @staticmethod
-    def parallel_scan_log(log_coeffs: torch.Tensor, log_values: torch.Tensor) -> torch.Tensor:
-        """
-        Parallel scan in log space for numerical stability
-
-        Args:
-            log_coeffs: Log of coefficients [batch, length, dim]
-            log_values: Log of values [batch, length, dim]
-
-        Returns:
-            Scanned values in log space
-        """
-        batch_size, seq_len, dim = log_coeffs.shape
-
-        if seq_len <= 4:
-            return ParallelScan._sequential_scan_log(log_coeffs, log_values)
-
-        levels = int(np.ceil(np.log2(seq_len)))
-
-        coeffs = log_coeffs.clone()
-        values = log_values.clone()
-
-        for level in range(levels):
-            step = 2 ** (level + 1)
-            if step - 1 >= seq_len:
-                break
-
-            indices = torch.arange(step - 1, seq_len, step, device=log_coeffs.device)
-
-            if indices.numel() > 0:
-                left_idx = indices - 2 ** level
-                right_idx = indices
-
-                valid_mask = (left_idx >= 0) & (right_idx < seq_len)
-                left_idx = left_idx[valid_mask]
-                right_idx = right_idx[valid_mask]
-
-                if left_idx.numel() > 0:
-                    left_coeffs = coeffs.index_select(1, left_idx)
-                    right_coeffs = coeffs.index_select(1, right_idx)
-                    left_values = values.index_select(1, left_idx)
-                    right_values = values.index_select(1, right_idx)
-
-                    new_coeffs = left_coeffs + right_coeffs
-                    new_values = torch.logaddexp(left_values, right_coeffs + right_values)
-
-                    scatter_shape = (batch_size, right_idx.size(0), dim)
-                    scatter_indices = right_idx[None, :, None].expand(batch_size, -1, dim)
-
-                    coeffs = coeffs.scatter(1, scatter_indices, new_coeffs)
-                    values = values.scatter(1, scatter_indices, new_values)
-
-        for level in reversed(range(levels)):
-            step = 2 ** (level + 1)
-            if step - 1 >= seq_len:
-                continue
-
-            indices = torch.arange(step - 1, seq_len, step, device=log_coeffs.device)
-
-            if indices.numel() > 0:
-                left_idx = indices - 2 ** level
-                right_idx = indices
-
-                valid_mask = (left_idx >= 0) & (right_idx < seq_len)
-                left_idx = left_idx[valid_mask]
-                right_idx = right_idx[valid_mask]
-
-                if left_idx.numel() > 0:
-                    left_values = values.index_select(1, left_idx)
-                    right_values = values.index_select(1, right_idx)
-                    right_coeffs = coeffs.index_select(1, right_idx)
-
-                    new_right = torch.logaddexp(left_values, right_coeffs + right_values)
-
-                    scatter_indices_right = right_idx[None, :, None].expand(batch_size, -1, dim)
-                    scatter_indices_left = left_idx[None, :, None].expand(batch_size, -1, dim)
-
-                    values = values.scatter(1, scatter_indices_right, new_right)
-                    values = values.scatter(1, scatter_indices_left, right_values)
-
-        return values
-
-    @staticmethod
-    def _sequential_scan_log(log_coeffs: torch.Tensor, log_values: torch.Tensor) -> torch.Tensor:
-        """Sequential scan for short sequences"""
-        batch_size, seq_len, dim = log_coeffs.shape
-        scanned_values = log_values.clone()
-
-        for b in range(batch_size):
-            for d in range(dim):
-                running_sum = scanned_values[b, 0, d]
-                for i in range(1, seq_len):
-                    running_sum = torch.logaddexp(
-                        running_sum,
-                        log_coeffs[b, i, d] + scanned_values[b, i, d]
-                    )
-                    scanned_values[b, i, d] = running_sum
-
-        return scanned_values
-
-
-
 class SelectiveSSM(nn.Module):
     """
     Selective State Space Model core module
-    Implements the selective scan mechanism from Mamba (serial version for debugging)
+    Uses official Mamba implementation when available, falls back to custom implementation
     """
     
     def __init__(self, d_model: int, d_state: int = 16, d_conv: int = 4, expand: int = 2):
@@ -172,28 +75,51 @@ class SelectiveSSM(nn.Module):
         self.d_conv = d_conv
         self.d_inner = int(expand * d_model)
         
-        self.in_proj = nn.Linear(d_model, self.d_inner * 2, bias=False)
+        if MAMBA_AVAILABLE:
+            # Use official Mamba implementation
+            self.mamba = Mamba(
+                d_model=d_model,
+                d_state=d_state,
+                d_conv=d_conv,
+                expand=expand,
+            )
+            self.use_official = True
+        else:
+            # Fallback to custom implementation
+            self.in_proj = nn.Linear(d_model, self.d_inner * 2, bias=False)
 
-        self.conv1d = nn.Conv1d(
-            in_channels=self.d_inner,
-            out_channels=self.d_inner,
-            kernel_size=d_conv,
-            bias=True,
-            padding=d_conv - 1,
-            groups=self.d_inner,
-        )
+            self.conv1d = nn.Conv1d(
+                in_channels=self.d_inner,
+                out_channels=self.d_inner,
+                kernel_size=d_conv,
+                bias=True,
+                padding=d_conv - 1,
+                groups=self.d_inner,
+            )
 
-        self.x_proj = nn.Linear(self.d_inner, self.d_inner + 2 * d_state, bias=False)
-        self.dt_proj = nn.Linear(self.d_inner, self.d_inner, bias=True)
+            self.x_proj = nn.Linear(self.d_inner, self.d_inner + 2 * d_state, bias=False)
+            self.dt_proj = nn.Linear(self.d_inner, self.d_inner, bias=True)
 
-        self.A_log = nn.Parameter(torch.log(torch.rand(self.d_inner, d_state)))
-        self.D = nn.Parameter(torch.ones(self.d_inner))
+            self.A_log = nn.Parameter(torch.log(torch.rand(self.d_inner, d_state)))
+            self.D = nn.Parameter(torch.ones(self.d_inner))
 
-        self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
-        self.act = nn.SiLU()
+            self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
+            self.act = nn.SiLU()
+            self.use_official = False
 
     @print_forward_shapes
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.use_official:
+            # Use official Mamba implementation
+            return self.mamba(x)
+        else:
+            # Use custom implementation (fallback)
+            return self._forward_custom(x)
+    
+    def _forward_custom(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Custom implementation (fallback when mamba-ssm is not available)
+        """
         batch_size, seq_len, _ = x.shape
         
         xz = self.in_proj(x)
