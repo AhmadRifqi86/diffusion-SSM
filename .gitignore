@@ -172,5 +172,7 @@ poetry.toml
 
 # LSP config files
 pyrightconfig.json
+tmp.py
+ssm_triton.py
 
 # End of https://www.toptal.com/developers/gitignore/api/python
