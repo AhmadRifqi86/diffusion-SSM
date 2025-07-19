@@ -75,37 +75,27 @@ class SelectiveSSM(nn.Module):
         self.d_conv = d_conv
         self.d_inner = int(expand * d_model)
         
-        if MAMBA_AVAILABLE:
-            # Use official Mamba implementation
-            self.mamba = Mamba(
-                d_model=d_model,
-                d_state=d_state,
-                d_conv=d_conv,
-                expand=expand,
-            )
-            self.use_official = True
-        else:
             # Fallback to custom implementation
-            self.in_proj = nn.Linear(d_model, self.d_inner * 2, bias=False)
+        self.in_proj = nn.Linear(d_model, self.d_inner * 2, bias=False)
 
-            self.conv1d = nn.Conv1d(
+        self.conv1d = nn.Conv1d(
                 in_channels=self.d_inner,
                 out_channels=self.d_inner,
                 kernel_size=d_conv,
                 bias=True,
                 padding=d_conv - 1,
                 groups=self.d_inner,
-            )
+        )
 
-            self.x_proj = nn.Linear(self.d_inner, self.d_inner + 2 * d_state, bias=False)
-            self.dt_proj = nn.Linear(self.d_inner, self.d_inner, bias=True)
+        self.x_proj = nn.Linear(self.d_inner, self.d_inner + 2 * d_state, bias=False)
+        self.dt_proj = nn.Linear(self.d_inner, self.d_inner, bias=True)
 
-            self.A_log = nn.Parameter(torch.log(torch.rand(self.d_inner, d_state)))
-            self.D = nn.Parameter(torch.ones(self.d_inner))
+        self.A_log = nn.Parameter(torch.log(torch.rand(self.d_inner, d_state)))
+        self.D = nn.Parameter(torch.ones(self.d_inner))
 
-            self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
-            self.act = nn.SiLU()
-            self.use_official = False
+        self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
+        self.act = nn.SiLU()
+        self.use_official = False
 
     @print_forward_shapes
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -278,31 +268,34 @@ class ScaleShift(nn.Module):
 class MainBlockParallel(nn.Module):
     """
     Main block implementing the architecture from the second image, now supports optional timestep embedding.
+    Uses official Mamba if available, otherwise falls back to MambaBlock.
     """
-    def __init__(self, dim, context_dim, heads=8, dim_head=64):
+    def __init__(self, dim, context_dim, heads=8, dim_head=64, d_state=16, d_conv=4, expand=2):
         super().__init__()
         self.dim = dim
         self.cross_attn = CrossAttention(dim, context_dim, heads, dim_head)
         self.scale_shift_1 = ScaleShift(dim, context_dim)
         self.norm_1 = nn.LayerNorm(dim)
-        self.mamba_block = MambaBlock(dim)
+        if MAMBA_AVAILABLE:
+            self.mamba_block = Mamba(
+                d_model=dim,
+                d_state=d_state,
+                d_conv=d_conv,
+                expand=expand,
+            )
+        else:
+            self.mamba_block = MambaBlock(dim, d_state, d_conv, expand)
         self.scale_shift_2 = ScaleShift(dim, context_dim)
         self.norm_2 = nn.LayerNorm(dim)
         self.scale_1 = nn.Parameter(torch.ones(1))
         self.scale_2 = nn.Parameter(torch.ones(1))
 
- 
     def forward(self, x, context, timestep_emb=None):
         residual = x
-        # If timestep_emb is None, add it to input before block
-        # if timestep_emb is None:
-        #     x = x + 0  # No-op, but placeholder for logic if needed
-        # First path: Cross Attention
         x_attn = self.cross_attn(x, context)
         x_attn = self.scale_shift_1(x_attn, context.mean(dim=1), timestep_emb)
         x_attn = self.norm_1(x_attn)
         x_attn = x_attn * self.scale_1
-        # Second path: Mamba Block
         x_mamba = self.mamba_block(x)
         x_mamba = self.scale_shift_2(x_mamba, context.mean(dim=1), timestep_emb)
         x_mamba = self.norm_2(x_mamba)
@@ -313,14 +306,23 @@ class MainBlockParallel(nn.Module):
 class MainBlockSerial(nn.Module):
     """
     Main block implementing the architecture from the second image, now supports optional timestep embedding.
+    Uses official Mamba if available, otherwise falls back to MambaBlock.
     """
-    def __init__(self, dim, context_dim, heads=8, dim_head=64):
+    def __init__(self, dim, context_dim, heads=8, dim_head=64, d_state=16, d_conv=4, expand=2):
         super().__init__()
         self.dim = dim
         self.cross_attn = CrossAttention(dim, context_dim, heads, dim_head)
         self.scale_shift_1 = ScaleShift(dim, context_dim)
         self.norm_1 = nn.LayerNorm(dim)
-        self.mamba_block = MambaBlock(dim)
+        if MAMBA_AVAILABLE:
+            self.mamba_block = Mamba(
+                d_model=dim,
+                d_state=d_state,
+                d_conv=d_conv,
+                expand=expand,
+            )
+        else:
+            self.mamba_block = MambaBlock(dim, d_state, d_conv, expand)
         self.scale_shift_2 = ScaleShift(dim, context_dim)
         self.norm_2 = nn.LayerNorm(dim)
         self.scale_1 = nn.Parameter(torch.ones(1))
@@ -329,8 +331,6 @@ class MainBlockSerial(nn.Module):
     @print_forward_shapes
     def forward(self, x, context, timestep_emb=None):
         residual_1 = x
-        # if timestep_emb is None:
-        #     x = x + 0  # No-op, but placeholder for logic if needed
         x_mamba = self.mamba_block(x)
         x_mamba = self.scale_shift_1(x_mamba, context.mean(dim=1), timestep_emb)
         x_mamba = self.norm_1(x_mamba)

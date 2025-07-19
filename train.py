@@ -370,9 +370,10 @@ def train_model(model, train_loader, val_loader, device, config):
             val_losses.append(val_loss)
         
         # Logging with phase information
+        val_loss_str = f"{val_loss:.4f}" if val_loss is not None else "N/A"
         logger.info(f"Epoch {epoch+1}/{config['num_epochs']} ({phase}): "
                    f"Train Loss: {avg_loss:.4f}, "
-                   f"Val Loss: {val_loss:.4f if val_loss else 'N/A'}, "
+                   f"Val Loss: {val_loss_str}, "
                    f"LR: {current_lr:.2e}")
         
         # Save best checkpoint
@@ -432,7 +433,7 @@ def main(): #test annotation nya gaada
         'learning_rate': 1e-4,
         'weight_decay': 0.01,
         'num_epochs': 250,  # Increased for better training schedule
-        'batch_size': 4,
+        'batch_size': 8,
         'image_size': 256,
         'num_workers': 2,
         'patience': 20,  # Early stopping patience
@@ -460,6 +461,9 @@ def main(): #test annotation nya gaada
         'train_image_dir': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/train2017',
         'val_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json',
         'val_image_dir': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/val2017',
+        # Subset sizes (set to None for full dataset)
+        'train_subset_size': 10000,
+        'val_subset_size': 1000,
     }
     
     # Device
@@ -472,8 +476,20 @@ def main(): #test annotation nya gaada
     #     config['train_image_dir'],
     #     config['image_size']
     # )
-    train_dataset = DummyDataset(num_samples=800, image_size=config['image_size'])
-    print("After create DummyDataset")
+    if os.path.exists(config['train_annotations']):
+        train_dataset = COCODataset(
+            config['train_annotations'],
+            config['train_image_dir'],
+            config['image_size']
+        )
+        # Subset for training if requested
+        if config.get('train_subset_size') is not None:
+            subset_size = min(config['train_subset_size'], len(train_dataset))
+            indices = random.sample(range(len(train_dataset)), subset_size)
+            train_dataset = torch.utils.data.Subset(train_dataset, indices)
+    else:
+        train_dataset = DummyDataset(num_samples=800, image_size=config['image_size'])
+    #print("After create train dataset")
     train_loader = DataLoader(
         train_dataset,
         batch_size=config['batch_size'],
@@ -489,7 +505,11 @@ def main(): #test annotation nya gaada
             config['val_image_dir'],
             config['image_size']
         )
-        
+        # Subset for validation if requested
+        if config.get('val_subset_size') is not None:
+            subset_size = min(config['val_subset_size'], len(val_dataset))
+            indices = random.sample(range(len(val_dataset)), subset_size)
+            val_dataset = torch.utils.data.Subset(val_dataset, indices)
         val_loader = DataLoader(
             val_dataset,
             batch_size=config['batch_size'],
