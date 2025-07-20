@@ -403,6 +403,7 @@ class DownBlock(nn.Module):
         time_emb = self.time_mlp(t)
         if not self.time_in_mainblock:
             h = h + time_emb[:, :, None, None]
+
         h = self.conv2(h)
         h = self.norm2(h)
         h = F.silu(h)
@@ -450,7 +451,7 @@ class UpBlock(nn.Module):
         self.main_block = MainBlockSerial(out_channels, context_dim)
         self.from_main_block = nn.Linear(out_channels, out_channels)
         self.time_in_mainblock = time_in_mainblock
-
+        
     @print_forward_shapes
     def forward(self, x, skip, t, context=None):
         x = self.upsample(x)
@@ -680,7 +681,7 @@ class UShapeMambaDiffusion(nn.Module):
                  clip_model_name="openai/clip-vit-base-patch32",
                  model_channels=160,
                  num_train_timesteps=1000,
-                 use_shared_time_embedding=False):  # Removed use_openai_clip parameter
+                 use_shared_time_embedding=True):  # Removed use_openai_clip parameter
         super().__init__()
         
         # Load pre-trained VAE
@@ -741,10 +742,9 @@ class UShapeMambaDiffusion(nn.Module):
                 truncation=True, 
                 return_tensors="pt"
             )
-            # Move each tensor in the dict to the correct device
-            text_inputs = {k: v.to(next(self.parameters()).device) for k, v in text_inputs.items()}
-            
-            text_features = self.clip_text_encoder(**text_inputs).last_hidden_state
+        # Move each tensor in the dict to the correct device
+        text_inputs = {k: v.to(next(self.parameters()).device) for k, v in text_inputs.items()}     
+        text_features = self.clip_text_encoder(**text_inputs).last_hidden_state
         
         return text_features
     
@@ -771,13 +771,17 @@ class UShapeMambaDiffusion(nn.Module):
     
     def sample(self, text_prompts, num_inference_steps=50, guidance_scale=7.5, height=512, width=512):
         """
-        Sample images from text prompts using proper DDPM sampling
+        Sample images from text prompts using proper DDPM sampling with Classifier-Free Guidance (CFG)
         """
         device = next(self.parameters()).device
         batch_size = len(text_prompts)
         
-        # Encode text
+        # Encode text (conditional)
         text_embeddings = self.encode_text(text_prompts)
+
+        # Encode unconditional context (empty strings)
+        uncond_prompts = [""] * batch_size
+        uncond_embeddings = self.encode_text(uncond_prompts)
         
         # Create latent shape
         latent_height = height // 8  # VAE downsamples by 8
@@ -789,13 +793,19 @@ class UShapeMambaDiffusion(nn.Module):
         
         # Proper DDPM sampling
         timesteps = torch.linspace(self.noise_scheduler.num_train_timesteps - 1, 0, num_inference_steps).long()
-        
+
         for t in timesteps:
             timesteps_batch = torch.full((batch_size,), t, device=device)
-            
-            # Predict noise
+            # Efficient batch: concat unconditional and conditional
+            context = torch.cat([uncond_embeddings, text_embeddings], dim=0)  # [2*B, seq, dim]
+            latents_input = torch.cat([latents, latents], dim=0)  # [2*B, ...]
+            timesteps_input = torch.cat([timesteps_batch, timesteps_batch], dim=0)
+
             with torch.no_grad():
-                noise_pred = self.unet(latents, timesteps_batch, text_embeddings)
+                noise_pred = self.unet(latents_input, timesteps_input, context)  # [2*B, ...]
+                noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2, dim=0)
+                # CFG interpolation
+                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
             
             # Denoising step
             latents = self.noise_scheduler.step(noise_pred, timesteps_batch, latents)
@@ -839,17 +849,16 @@ if __name__ == "__main__":
     # Test both models
     for name, model in [("Shared", model_shared), ("Separate", model_separate)]:
         print(f"\n--- Testing {name} Time Embedding Model ---")
-        # Forward pass
-        with torch.no_grad():
-            predicted_noise, noise, latents = model(images, timesteps, text_prompts)
-            
-            # Sample new images
-            generated_images = model.sample(["A futuristic city", "A peaceful lake"], num_inference_steps=20)
-        
-        print(f"{name} Model:")
-        print(f"  Input images shape: {images.shape}")
-        print(f"  Original latents shape: {latents.shape}")
-        print(f"  Predicted noise shape: {predicted_noise.shape}")
-        print(f"  Generated images shape: {generated_images.shape}")
-        print(f"  Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
-        print(f"  Total parameters: {sum(p.numel() for p in model.parameters()):,}")
+    # Forward pass
+    with torch.no_grad():
+        predicted_noise, noise, latents = model(images, timesteps, text_prompts)
+        # Sample new images
+        generated_images = model.sample(["A futuristic city", "A peaceful lake"], num_inference_steps=20)
+    
+    print(f"{name} Model:")
+    print(f"  Input images shape: {images.shape}")
+    print(f"  Original latents shape: {latents.shape}")
+    print(f"  Predicted noise shape: {predicted_noise.shape}")
+    print(f"  Generated images shape: {generated_images.shape}")
+    print(f"  Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
+    print(f"  Total parameters: {sum(p.numel() for p in model.parameters()):,}")
