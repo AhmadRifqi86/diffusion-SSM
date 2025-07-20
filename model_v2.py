@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple
 import math
-import numpy as np
 import inspect
 
 # Import pre-trained models
@@ -367,12 +366,25 @@ class TimestepEmbedding(nn.Module):
         return embeddings
 
 class DownBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, time_dim, context_dim, time_in_mainblock=False):
+    def __init__(self, in_channels, out_channels, time_dim, context_dim, time_in_mainblock=False, use_shared_time_embedding=True):
         super().__init__()
-        self.time_mlp = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(time_dim, out_channels)
-        )
+        self.use_shared_time_embedding = use_shared_time_embedding
+        
+        if use_shared_time_embedding:
+            # Shared approach: Project from shared time embedding to block channels
+            self.time_mlp = nn.Sequential(
+                nn.SiLU(),
+                nn.Linear(time_dim, out_channels)  # Project shared embedding to block channels
+            )
+        else:
+            # Separate approach: Create independent time embedding for this block
+            self.time_mlp = nn.Sequential(
+                TimestepEmbedding(time_dim),  # Create timestep embedding
+                nn.Linear(time_dim, time_dim),
+                nn.SiLU(),
+                nn.Linear(time_dim, out_channels)  # Project to block channels
+            )
+        
         self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
         self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
         self.norm1 = nn.GroupNorm(8, out_channels)
@@ -389,7 +401,6 @@ class DownBlock(nn.Module):
         h = self.norm1(h)
         h = F.silu(h)
         time_emb = self.time_mlp(t)
-        #print(f"Downblock, h shape {h.shape}, t shape {time_emb.shape}")
         if not self.time_in_mainblock:
             h = h + time_emb[:, :, None, None]
         h = self.conv2(h)
@@ -408,16 +419,28 @@ class DownBlock(nn.Module):
         return self.downsample(h), h
 
 class UpBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, skip_channels, time_embed_dim, context_dim, time_in_mainblock=False):
+    def __init__(self, in_channels, out_channels, skip_channels, time_embed_dim, context_dim, time_in_mainblock=False, use_shared_time_embedding=True):
         super().__init__()
+        self.use_shared_time_embedding = use_shared_time_embedding
+        
         self.upsample = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1)
         self.conv1 = nn.Conv2d(out_channels + skip_channels, out_channels, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
 
-        self.time_mlp = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(time_embed_dim, out_channels)
-        )
+        if use_shared_time_embedding:
+            # Shared approach: Project from shared time embedding to block channels
+            self.time_mlp = nn.Sequential(
+                nn.SiLU(),
+                nn.Linear(time_embed_dim, out_channels)  # Project shared embedding to block channels
+            )
+        else:
+            # Separate approach: Create independent time embedding for this block
+            self.time_mlp = nn.Sequential(
+                TimestepEmbedding(time_embed_dim),  # Create timestep embedding
+                nn.Linear(time_embed_dim, time_embed_dim),
+                nn.SiLU(),
+                nn.Linear(time_embed_dim, out_channels)  # Project to block channels
+            )
 
         self.norm1 = nn.GroupNorm(8, out_channels)
         self.norm2 = nn.GroupNorm(8, out_channels)
@@ -461,12 +484,24 @@ class UpBlock(nn.Module):
 
 
 class MiddleBlock(nn.Module):
-    def __init__(self, channels, time_dim, context_dim, time_in_mainblock=False):
+    def __init__(self, channels, time_dim, context_dim, time_in_mainblock=False, use_shared_time_embedding=True):
         super().__init__()
-        self.time_mlp = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(time_dim, channels)
-        )
+        self.use_shared_time_embedding = use_shared_time_embedding
+        
+        if use_shared_time_embedding:
+            # Shared approach: Project from shared time embedding to block channels
+            self.time_mlp = nn.Sequential(
+                nn.SiLU(),
+                nn.Linear(time_dim, channels)  # Project shared embedding to block channels
+            )
+        else:
+            # Separate approach: Create independent time embedding for this block
+            self.time_mlp = nn.Sequential(
+                TimestepEmbedding(time_dim),  # Create timestep embedding
+                nn.Linear(time_dim, time_dim),
+                nn.SiLU(),
+                nn.Linear(time_dim, channels)  # Project to block channels
+            )
         
         self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
         self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
@@ -555,16 +590,25 @@ class UShapeMamba(nn.Module):
                  in_channels=4,
                  model_channels=160,
                  time_embed_dim=160,
-                 context_dim=768):
+                 context_dim=768,
+                 use_shared_time_embedding=True):  # New parameter to control time embedding approach
         super().__init__()
         
-        # Time embedding
-        self.time_embed = nn.Sequential(
-            TimestepEmbedding(model_channels),
-            nn.Linear(model_channels, time_embed_dim),
-            nn.SiLU(),
-            nn.Linear(time_embed_dim, time_embed_dim),
-        )
+        # Time embedding configuration
+        self.use_shared_time_embedding = use_shared_time_embedding
+        
+        if use_shared_time_embedding:
+            # Shared time embedding approach (default)
+            self.time_embed = nn.Sequential(
+                TimestepEmbedding(model_channels),
+                nn.Linear(model_channels, time_embed_dim),
+                nn.SiLU(),
+                nn.Linear(time_embed_dim, time_embed_dim),
+            )
+            print("Using SHARED time embedding approach")
+        else:
+            # Separate time embedding approach - no global time embedding
+            print("Using SEPARATE time embedding approach")
         
         self.context_proj = nn.Linear(context_dim, context_dim)
         self.input_proj = nn.Conv2d(in_channels, model_channels, 3, padding=1)
@@ -576,12 +620,14 @@ class UShapeMamba(nn.Module):
         for i in range(4):
             out_ch = model_channels * (2 ** i)
             self.down_blocks.append(
-                DownBlock(in_ch, out_ch, time_embed_dim, context_dim)
+                DownBlock(in_ch, out_ch, time_embed_dim, context_dim, 
+                         use_shared_time_embedding=use_shared_time_embedding)
             )
             down_channels.append(out_ch)
             in_ch = out_ch
 
-        self.middle_block = MiddleBlock(in_ch, time_embed_dim, context_dim)
+        self.middle_block = MiddleBlock(in_ch, time_embed_dim, context_dim, 
+                                       use_shared_time_embedding=use_shared_time_embedding)
 
         # Reverse for up path
         self.up_blocks = nn.ModuleList()
@@ -591,7 +637,8 @@ class UShapeMamba(nn.Module):
         for i, skip_ch in enumerate(skip_channels):
             out_ch = model_channels * (2 ** (2 - i)) if i < 3 else model_channels
             self.up_blocks.append(
-                UpBlock(up_in_channels, out_ch, skip_ch, time_embed_dim, context_dim, time_in_mainblock=False)
+                UpBlock(up_in_channels, out_ch, skip_ch, time_embed_dim, context_dim, 
+                       time_in_mainblock=False, use_shared_time_embedding=use_shared_time_embedding)
             )
             up_in_channels = out_ch
 
@@ -599,7 +646,12 @@ class UShapeMamba(nn.Module):
         
     @print_forward_shapes
     def forward(self, x, timesteps, context=None):
-        t = self.time_embed(timesteps)
+        if self.use_shared_time_embedding:
+            # Shared approach: Use global time embedding
+            t = self.time_embed(timesteps)
+        else:
+            # Separate approach: Pass raw timesteps to each block
+            t = timesteps
         
         if context is not None:
             context = self.context_proj(context)
@@ -614,7 +666,6 @@ class UShapeMamba(nn.Module):
             skip_connections.append(skip)
         
         h = self.middle_block(h, t, context)
-        #print("h shape after middle block", h.shape)
         for i, block in enumerate(self.up_blocks):
             skip = skip_connections[-(i + 1)]
             h = block(h, skip, t, context)
@@ -629,7 +680,8 @@ class UShapeMambaDiffusion(nn.Module):
                  clip_model_name="openai/clip-vit-base-patch32",
                  model_channels=160,
                  use_openai_clip=False,
-                 num_train_timesteps=1000):
+                 num_train_timesteps=1000,
+                 use_shared_time_embedding=False):  # New parameter to control time embedding approach
         super().__init__()
         
         # Load pre-trained VAE
@@ -659,11 +711,12 @@ class UShapeMambaDiffusion(nn.Module):
         # Get VAE latent channels
         vae_latent_channels = self.vae.config.latent_channels
         
-        # U-Shape Mamba denoiser
+        # U-Shape Mamba denoiser with configurable time embedding
         self.unet = UShapeMamba(
             in_channels=vae_latent_channels,
             model_channels=model_channels,
-            context_dim=context_dim
+            context_dim=context_dim,
+            use_shared_time_embedding=use_shared_time_embedding
         )
         
         # Noise scheduler
@@ -718,7 +771,6 @@ class UShapeMambaDiffusion(nn.Module):
                     return_tensors="pt"
                 )
                 # Move each tensor in the dict to the correct device
-                #print("encode text using huggingface clip")
                 text_inputs = {k: v.to(next(self.parameters()).device) for k, v in text_inputs.items()}
                 
                 text_features = self.clip_text_encoder(**text_inputs).last_hidden_state
@@ -791,11 +843,22 @@ class UShapeMambaDiffusion(nn.Module):
 
 # Example usage
 if __name__ == "__main__":
-    # Create model with pre-trained components
-    model = UShapeMambaDiffusion(
+    # Create model with SHARED time embedding (default)
+    print("=== Testing SHARED Time Embedding ===")
+    model_shared = UShapeMambaDiffusion(
         vae_model_name="stabilityai/sd-vae-ft-mse",
         clip_model_name="openai/clip-vit-base-patch32",
-        use_openai_clip=False  # Set to True to use OpenAI CLIP
+        use_openai_clip=False,
+        use_shared_time_embedding=True  # Shared approach
+    )
+    
+    # Create model with SEPARATE time embedding
+    print("\n=== Testing SEPARATE Time Embedding ===")
+    model_separate = UShapeMambaDiffusion(
+        vae_model_name="stabilityai/sd-vae-ft-mse",
+        clip_model_name="openai/clip-vit-base-patch32",
+        use_openai_clip=False,
+        use_shared_time_embedding=False  # Separate approach
     )
     
     # Example inputs
@@ -804,16 +867,20 @@ if __name__ == "__main__":
     timesteps = torch.randint(0, 1000, (batch_size,))
     text_prompts = ["A beautiful sunset", "A cat in a garden"]
     
-    # Forward pass
-    with torch.no_grad():
-        predicted_noise, noise, latents = model(images, timesteps, text_prompts)
+    # Test both models
+    for name, model in [("Shared", model_shared), ("Separate", model_separate)]:
+        print(f"\n--- Testing {name} Time Embedding Model ---")
+        # Forward pass
+        with torch.no_grad():
+            predicted_noise, noise, latents = model(images, timesteps, text_prompts)
+            
+            # Sample new images
+            generated_images = model.sample(["A futuristic city", "A peaceful lake"], num_inference_steps=20)
         
-        # Sample new images
-        generated_images = model.sample(["A futuristic city", "A peaceful lake"], num_inference_steps=20)
-    
-    print(f"Input images shape: {images.shape}")
-    print(f"Original latents shape: {latents.shape}")
-    print(f"Predicted noise shape: {predicted_noise.shape}")
-    print(f"Generated images shape: {generated_images.shape}")
-    print(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
-    print(f"Total parameters: {sum(p.numel() for p in model.parameters()):,}")
+        print(f"{name} Model:")
+        print(f"  Input images shape: {images.shape}")
+        print(f"  Original latents shape: {latents.shape}")
+        print(f"  Predicted noise shape: {predicted_noise.shape}")
+        print(f"  Generated images shape: {generated_images.shape}")
+        print(f"  Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
+        print(f"  Total parameters: {sum(p.numel() for p in model.parameters()):,}")
