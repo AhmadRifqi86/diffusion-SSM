@@ -679,34 +679,18 @@ class UShapeMambaDiffusion(nn.Module):
                  vae_model_name="stabilityai/sd-vae-ft-mse",
                  clip_model_name="openai/clip-vit-base-patch32",
                  model_channels=160,
-                 use_openai_clip=False,
                  num_train_timesteps=1000,
-                 use_shared_time_embedding=False):  # New parameter to control time embedding approach
+                 use_shared_time_embedding=False):  # Removed use_openai_clip parameter
         super().__init__()
         
         # Load pre-trained VAE
         self.vae = AutoencoderKL.from_pretrained(vae_model_name)
         
-        # Load pre-trained CLIP encoder
-        self.use_openai_clip = use_openai_clip
-        if use_openai_clip:
-            # Use OpenAI CLIP
-            try:
-                import clip
-                self.clip_model, self.clip_preprocess = clip.load("ViT-B/32")
-                self.clip_tokenizer = clip.tokenize
-                context_dim = self.clip_model.text_projection.out_features
-            except ImportError:
-                print("Warning: OpenAI CLIP not available, falling back to Hugging Face CLIP")
-                self.use_openai_clip = False
-                self.clip_text_encoder = CLIPTextModel.from_pretrained(clip_model_name)
-                self.clip_tokenizer = CLIPTokenizer.from_pretrained(clip_model_name)
-                context_dim = self.clip_text_encoder.config.hidden_size
-        else:
-            # Use Hugging Face CLIP
-            self.clip_text_encoder = CLIPTextModel.from_pretrained(clip_model_name)
-            self.clip_tokenizer = CLIPTokenizer.from_pretrained(clip_model_name)
-            context_dim = self.clip_text_encoder.config.hidden_size
+        # Load Hugging Face CLIP encoder (only option now)
+        print(f"Loading Hugging Face CLIP: {clip_model_name}")
+        self.clip_text_encoder = CLIPTextModel.from_pretrained(clip_model_name)
+        self.clip_tokenizer = CLIPTokenizer.from_pretrained(clip_model_name)
+        context_dim = self.clip_text_encoder.config.hidden_size
         
         # Get VAE latent channels
         vae_latent_channels = self.vae.config.latent_channels
@@ -726,12 +710,8 @@ class UShapeMambaDiffusion(nn.Module):
         for param in self.vae.parameters():
             param.requires_grad = False
         
-        if use_openai_clip:
-            for param in self.clip_model.parameters():
-                param.requires_grad = False
-        else:
-            for param in self.clip_text_encoder.parameters():
-                param.requires_grad = False
+        for param in self.clip_text_encoder.parameters():
+            param.requires_grad = False
     
     def encode_images(self, images):
         """Encode images to latent space using pre-trained VAE"""
@@ -753,27 +733,18 @@ class UShapeMambaDiffusion(nn.Module):
         return images
     
     def encode_text(self, text_prompts):
-        """Encode text prompts using pre-trained CLIP"""
-        if self.use_openai_clip:
-            # OpenAI CLIP
-            with torch.no_grad():
-                text_tokens = self.clip_tokenizer(text_prompts).to(next(self.parameters()).device)
-                text_features = self.clip_model.encode_text(text_tokens)
-                # Get the text features after projection
-                text_features = text_features.float()
-        else:
-            # Hugging Face CLIP
-            with torch.no_grad():
-                text_inputs = self.clip_tokenizer(
-                    text_prompts, 
-                    padding=True, 
-                    truncation=True, 
-                    return_tensors="pt"
-                )
-                # Move each tensor in the dict to the correct device
-                text_inputs = {k: v.to(next(self.parameters()).device) for k, v in text_inputs.items()}
-                
-                text_features = self.clip_text_encoder(**text_inputs).last_hidden_state
+        """Encode text prompts using Hugging Face CLIP"""
+        with torch.no_grad():
+            text_inputs = self.clip_tokenizer(
+                text_prompts, 
+                padding=True, 
+                truncation=True, 
+                return_tensors="pt"
+            )
+            # Move each tensor in the dict to the correct device
+            text_inputs = {k: v.to(next(self.parameters()).device) for k, v in text_inputs.items()}
+            
+            text_features = self.clip_text_encoder(**text_inputs).last_hidden_state
         
         return text_features
     
@@ -847,8 +818,7 @@ if __name__ == "__main__":
     print("=== Testing SHARED Time Embedding ===")
     model_shared = UShapeMambaDiffusion(
         vae_model_name="stabilityai/sd-vae-ft-mse",
-        clip_model_name="openai/clip-vit-base-patch32",
-        use_openai_clip=False,
+        clip_model_name="openai/clip-vit-base-patch32",  # Still uses Hugging Face CLIP
         use_shared_time_embedding=True  # Shared approach
     )
     
@@ -856,8 +826,7 @@ if __name__ == "__main__":
     print("\n=== Testing SEPARATE Time Embedding ===")
     model_separate = UShapeMambaDiffusion(
         vae_model_name="stabilityai/sd-vae-ft-mse",
-        clip_model_name="openai/clip-vit-base-patch32",
-        use_openai_clip=False,
+        clip_model_name="openai/clip-vit-base-patch32",  # Still uses Hugging Face CLIP
         use_shared_time_embedding=False  # Separate approach
     )
     

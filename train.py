@@ -20,8 +20,6 @@ from collections import deque
 
 #pip install -e . --no-build-isolation   #Clone repo mamba-ssm habis itu pip install tanpa build isolation
 
-
-
 class DummyDataset(torch.utils.data.Dataset):
     def __init__(self, num_samples=1000, image_size=512):
         self.num_samples = num_samples
@@ -710,8 +708,8 @@ def main(): #test annotation nya gaada
         # Checkpointing configuration
         'enable_checkpointing': True,
         'checkpoint_dir': 'checkpoints',
-        #'resume_from_checkpoint':None,
-        'resume_from_checkpoint': 'checkpoints/checkpoint_epoch_3.pt', # Set to path of checkpoint to resume from
+        'resume_from_checkpoint':None,
+        #'resume_from_checkpoint': 'checkpoints/checkpoint_epoch_3.pt', # Set to path of checkpoint to resume from
     }
     
     # Device
@@ -760,8 +758,7 @@ def main(): #test annotation nya gaada
     # Create model
     model = UShapeMambaDiffusion(
         vae_model_name="stabilityai/sd-vae-ft-mse",
-        clip_model_name="openai/clip-vit-base-patch32",
-        use_openai_clip=False
+        clip_model_name="openai/clip-vit-base-patch32"
     ).to(device)
     
     # Enable gradient checkpointing for memory efficiency
