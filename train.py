@@ -145,6 +145,26 @@ class PhaseScheduler:
             
         self.current_epoch += 1
         return lr
+    
+    def state_dict(self):
+        """Save scheduler state"""
+        return {
+            'current_epoch': self.current_epoch,
+            'base_lr': self.base_lr,
+            'total_epochs': self.total_epochs,
+            'warmup_epochs': self.warmup_epochs,
+            'decay_epochs': self.decay_epochs,
+            'main_epochs': self.main_epochs
+        }
+    
+    def load_state_dict(self, state_dict):
+        """Load scheduler state"""
+        self.current_epoch = state_dict['current_epoch']
+        self.base_lr = state_dict['base_lr']
+        self.total_epochs = state_dict['total_epochs']
+        self.warmup_epochs = state_dict['warmup_epochs']
+        self.decay_epochs = state_dict['decay_epochs']
+        self.main_epochs = state_dict['main_epochs']
 
 class LinearScheduler:
     """Linear learning rate scheduler with optional warmup"""
@@ -170,6 +190,24 @@ class LinearScheduler:
             
         self.current_epoch += 1
         return lr
+    
+    def state_dict(self):
+        """Save scheduler state"""
+        return {
+            'current_epoch': self.current_epoch,
+            'base_lr': self.base_lr,
+            'total_epochs': self.total_epochs,
+            'warmup_epochs': self.warmup_epochs,
+            'end_lr_factor': self.end_lr_factor
+        }
+    
+    def load_state_dict(self, state_dict):
+        """Load scheduler state"""
+        self.current_epoch = state_dict['current_epoch']
+        self.base_lr = state_dict['base_lr']
+        self.total_epochs = state_dict['total_epochs']
+        self.warmup_epochs = state_dict['warmup_epochs']
+        self.end_lr_factor = state_dict['end_lr_factor']
 
 def create_scheduler(optimizer, config):
     """Create scheduler based on config"""
@@ -268,6 +306,10 @@ def train_model(model, train_loader, val_loader, device, config, train_indices=N
                 scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             elif hasattr(scheduler, 'current_epoch'):
                 # For custom schedulers
+                scheduler.current_epoch = checkpoint.get('scheduler_epoch', 0)
+        else:
+            # For custom schedulers without state_dict, restore current_epoch
+            if hasattr(scheduler, 'current_epoch'):
                 scheduler.current_epoch = checkpoint.get('scheduler_epoch', 0)
         
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
@@ -668,6 +710,7 @@ def main(): #test annotation nya gaada
         # Checkpointing configuration
         'enable_checkpointing': True,
         'checkpoint_dir': 'checkpoints',
+        #'resume_from_checkpoint':None,
         'resume_from_checkpoint': 'checkpoints/checkpoint_epoch_2.pt', # Set to path of checkpoint to resume from
     }
     
