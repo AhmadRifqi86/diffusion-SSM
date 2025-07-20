@@ -710,8 +710,8 @@ def main(): #test annotation nya gaada
         # Checkpointing configuration
         'enable_checkpointing': True,
         'checkpoint_dir': 'checkpoints',
-        'resume_from_checkpoint':None,
-        #'resume_from_checkpoint': 'checkpoints/checkpoint_epoch_4.pt', # Set to path of checkpoint to resume from
+        #'resume_from_checkpoint':None,
+        'resume_from_checkpoint': 'checkpoints/checkpoint_epoch_3.pt', # Set to path of checkpoint to resume from
     }
     
     # Device

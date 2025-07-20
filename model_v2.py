@@ -408,48 +408,55 @@ class DownBlock(nn.Module):
         return self.downsample(h), h
 
 class UpBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, skip_channels, time_embed_dim, context_dim):
+    def __init__(self, in_channels, out_channels, skip_channels, time_embed_dim, context_dim, time_in_mainblock=False):
         super().__init__()
         self.upsample = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1)
         self.conv1 = nn.Conv2d(out_channels + skip_channels, out_channels, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
 
-        self.time_embed = nn.Sequential(
+        self.time_mlp = nn.Sequential(
             nn.SiLU(),
             nn.Linear(time_embed_dim, out_channels)
         )
 
-        self.norm = nn.GroupNorm(8, out_channels)
-        self.attn = CrossAttention(dim=out_channels, context_dim=context_dim)
+        self.norm1 = nn.GroupNorm(8, out_channels)
+        self.norm2 = nn.GroupNorm(8, out_channels)
         
-        # Use official Mamba if available, otherwise fallback to MambaBlock
-        if MAMBA_AVAILABLE:
-            self.mamba = Mamba(
-                d_model=out_channels,
-                d_state=16,
-                d_conv=4,
-                expand=2,
-            )
-        else:
-            self.mamba = MambaBlock(dim=out_channels)
+        # Main block processing - consistent with DownBlock and MiddleBlock
+        self.to_main_block = nn.Linear(out_channels, out_channels)
+        self.main_block = MainBlockSerial(out_channels, context_dim)
+        self.from_main_block = nn.Linear(out_channels, out_channels)
+        self.time_in_mainblock = time_in_mainblock
 
     @print_forward_shapes
     def forward(self, x, skip, t, context=None):
         x = self.upsample(x)
         x = torch.cat([x, skip], dim=1)
         x = self.conv1(x)
+        x = self.norm1(x)
+        x = F.silu(x)
+        
+        # Process time embedding - consistent with DownBlock and MiddleBlock
+        time_emb = self.time_mlp(t)
+        if not self.time_in_mainblock:
+            x = x + time_emb[:, :, None, None]
+        
         x = self.conv2(x)
-        time_emb = self.time_embed(t).unsqueeze(-1).unsqueeze(-1)
-        x = x + time_emb
-        x = self.norm(x)
-        x = self.attn(x, context)
-        x = self.mamba(x)
-        # Ensure output is 4D
-        if x.dim() == 3:
-            B, seq_len, C = x.shape
-            H, W = skip.shape[2], skip.shape[3]
-            assert seq_len == H * W, f"Cannot reshape: seq_len={seq_len}, H={H}, W={W}"
-            x = x.transpose(1, 2).reshape(B, C, H, W)
+        x = self.norm2(x)
+        x = F.silu(x)
+        
+        # Apply Main Block - consistent with DownBlock and MiddleBlock
+        if context is not None:
+            B, C, H, W = x.shape
+            x_flat = x.flatten(2).transpose(1, 2)
+            x_flat = self.to_main_block(x_flat)
+            if self.time_in_mainblock:
+                x_flat = self.main_block(x_flat, context, time_emb)
+            else:
+                x_flat = self.main_block(x_flat, context)
+            x_flat = self.from_main_block(x_flat)
+            x = x_flat.transpose(1, 2).reshape(B, C, H, W)
+        
         return x
 
 
@@ -584,7 +591,7 @@ class UShapeMamba(nn.Module):
         for i, skip_ch in enumerate(skip_channels):
             out_ch = model_channels * (2 ** (2 - i)) if i < 3 else model_channels
             self.up_blocks.append(
-                UpBlock(up_in_channels, out_ch, skip_ch, time_embed_dim, context_dim)
+                UpBlock(up_in_channels, out_ch, skip_ch, time_embed_dim, context_dim, time_in_mainblock=False)
             )
             up_in_channels = out_ch
 
