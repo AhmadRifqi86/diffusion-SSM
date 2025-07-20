@@ -212,7 +212,7 @@ def create_scheduler(optimizer, config):
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}")
 
-def train_model(model, train_loader, val_loader, device, config):
+def train_model(model, train_loader, val_loader, device, config, train_indices=None, val_indices=None):
     """Training loop with 3-phase schedule and early stopping"""
     
     # Setup training components
@@ -247,10 +247,55 @@ def train_model(model, train_loader, val_loader, device, config):
     
     best_loss = float('inf')
     
+    # Checkpointing setup
+    checkpoint_dir = config.get('checkpoint_dir', 'checkpoints')
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    enable_checkpointing = config.get('enable_checkpointing', True)
+    resume_from_checkpoint = config.get('resume_from_checkpoint', None)
+    
+    # Resume training if checkpoint exists
+    start_epoch = 0
+    if resume_from_checkpoint and os.path.exists(resume_from_checkpoint):
+        logger.info(f"Resuming training from checkpoint: {resume_from_checkpoint}")
+        checkpoint = torch.load(resume_from_checkpoint, map_location=device)
+        
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        # Handle different scheduler types
+        if checkpoint.get('scheduler_state_dict') is not None:
+            if hasattr(scheduler, 'load_state_dict'):
+                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            elif hasattr(scheduler, 'current_epoch'):
+                # For custom schedulers
+                scheduler.current_epoch = checkpoint.get('scheduler_epoch', 0)
+        
+        scaler.load_state_dict(checkpoint['scaler_state_dict'])
+        start_epoch = checkpoint['epoch']
+        train_losses = checkpoint.get('train_losses', [])
+        val_losses = checkpoint.get('val_losses', [])
+        learning_rates = checkpoint.get('learning_rates', [])
+        best_loss = checkpoint.get('best_loss', float('inf'))
+        
+        # Restore early stopping state
+        if 'early_stopping_state' in checkpoint:
+            early_stopping.best_loss = checkpoint['early_stopping_state']['best_loss']
+            early_stopping.counter = checkpoint['early_stopping_state']['counter']
+            early_stopping.best_weights = checkpoint['early_stopping_state']['best_weights']
+        
+        # Restore dataset indices
+        if 'train_indices' in checkpoint:
+            train_indices = checkpoint['train_indices']
+            val_indices = checkpoint['val_indices']
+        
+        logger.info(f"Resumed from epoch {start_epoch}")
+        logger.info(f"Previous best loss: {best_loss:.4f}")
+    
     # Log scheduler information
     scheduler_type = config.get('scheduler', 'phase')
     logger.info(f"Starting training with {config['num_epochs']} epochs")
     logger.info(f"Scheduler: {scheduler_type}")
+    logger.info(f"Checkpointing: {'Enabled' if enable_checkpointing else 'Disabled'}")
     
     if scheduler_type == 'phase':
         logger.info(f"Phase 1 (Warmup): epochs 1-{scheduler.warmup_epochs}")
@@ -261,7 +306,7 @@ def train_model(model, train_loader, val_loader, device, config):
     elif scheduler_type == 'linear':
         logger.info(f"Linear decay with {scheduler.warmup_epochs} warmup epochs")
     
-    for epoch in range(config['num_epochs']):
+    for epoch in range(start_epoch, config['num_epochs']):
         model.train()
         total_loss = 0
         num_batches = 0
@@ -387,27 +432,124 @@ def train_model(model, train_loader, val_loader, device, config):
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict() if hasattr(scheduler, 'state_dict') else None,
+                'scheduler_epoch': getattr(scheduler, 'current_epoch', None),
+                'scaler_state_dict': scaler.state_dict(),
                 'loss': val_loss,
                 'config': config,
-                'phase': phase
-            }, 'best_checkpoint.pt')
+                'phase': phase,
+                'train_losses': train_losses,
+                'val_losses': val_losses,
+                'learning_rates': learning_rates,
+                'best_loss': best_loss,
+                'early_stopping_state': {
+                    'best_loss': early_stopping.best_loss,
+                    'counter': early_stopping.counter,
+                    'best_weights': early_stopping.best_weights
+                },
+                'train_indices': train_indices,
+                'val_indices': val_indices
+            }, os.path.join(checkpoint_dir, 'best_checkpoint.pt'))
             logger.info(f"New best model saved with val_loss: {val_loss:.4f}")
         
-        # Regular checkpoint every 10 epochs
-        if (epoch + 1) % 10 == 0:
+        # Save checkpoint after every epoch if enabled
+        if enable_checkpointing:
+            checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch+1}.pt')
+            
+            # Delete previous epoch's checkpoint file if it exists
+            if epoch > 0:  # Don't delete on first epoch
+                prev_checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch}.pt')
+                if os.path.exists(prev_checkpoint_path):
+                    os.remove(prev_checkpoint_path)
+                    logger.info(f"Deleted previous checkpoint: {prev_checkpoint_path}")
+            
             torch.save({
                 'epoch': epoch + 1,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict() if hasattr(scheduler, 'state_dict') else None,
+                'scheduler_epoch': getattr(scheduler, 'current_epoch', None),
+                'scaler_state_dict': scaler.state_dict(),
                 'loss': avg_loss,
                 'val_loss': val_loss,
                 'config': config,
                 'phase': phase,
                 'train_losses': train_losses,
                 'val_losses': val_losses,
-                'learning_rates': learning_rates
-            }, f'checkpoint_epoch_{epoch+1}.pt')
+                'learning_rates': learning_rates,
+                'best_loss': best_loss,
+                'early_stopping_state': {
+                    'best_loss': early_stopping.best_loss,
+                    'counter': early_stopping.counter,
+                    'best_weights': early_stopping.best_weights
+                },
+                'train_indices': train_indices,
+                'val_indices': val_indices
+            }, checkpoint_path)
+            
+            # Save latest checkpoint for easy resuming
+            latest_checkpoint_path = os.path.join(checkpoint_dir, 'latest_checkpoint.pt')
+            
+            # Delete previous latest checkpoint if it exists
+            if os.path.exists(latest_checkpoint_path):
+                os.remove(latest_checkpoint_path)
+                
+            torch.save({
+                'epoch': epoch + 1,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict() if hasattr(scheduler, 'state_dict') else None,
+                'scheduler_epoch': getattr(scheduler, 'current_epoch', None),
+                'scaler_state_dict': scaler.state_dict(),
+                'loss': avg_loss,
+                'val_loss': val_loss,
+                'config': config,
+                'phase': phase,
+                'train_losses': train_losses,
+                'val_losses': val_losses,
+                'learning_rates': learning_rates,
+                'best_loss': best_loss,
+                'early_stopping_state': {
+                    'best_loss': early_stopping.best_loss,
+                    'counter': early_stopping.counter,
+                    'best_weights': early_stopping.best_weights
+                },
+                'train_indices': train_indices,
+                'val_indices': val_indices
+            }, latest_checkpoint_path)
+            
+            logger.info(f"Checkpoint saved: {checkpoint_path}")
+        
+        # Regular checkpoint every 10 epochs (if not already saved)
+        elif (epoch + 1) % 10 == 0:
+            checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch+1}.pt')
+            
+            # Delete previous epoch-specific checkpoint if it exists
+            if os.path.exists(checkpoint_path):
+                os.remove(checkpoint_path)
+                
+            torch.save({
+                'epoch': epoch + 1,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict() if hasattr(scheduler, 'state_dict') else None,
+                'scheduler_epoch': getattr(scheduler, 'current_epoch', None),
+                'scaler_state_dict': scaler.state_dict(),
+                'loss': avg_loss,
+                'val_loss': val_loss,
+                'config': config,
+                'phase': phase,
+                'train_losses': train_losses,
+                'val_losses': val_losses,
+                'learning_rates': learning_rates,
+                'best_loss': best_loss,
+                'early_stopping_state': {
+                    'best_loss': early_stopping.best_loss,
+                    'counter': early_stopping.counter,
+                    'best_weights': early_stopping.best_weights
+                },
+                'train_indices': train_indices,
+                'val_indices': val_indices
+            }, checkpoint_path)
         
         # Early stopping check
         if val_loss and early_stopping(val_loss, model):
@@ -426,9 +568,62 @@ def train_model(model, train_loader, val_loader, device, config):
         'learning_rates': learning_rates,
         'best_loss': best_loss,
         'final_epoch': len(train_losses)
-    }, 'training_history.pt')
+    }, os.path.join(checkpoint_dir, 'training_history.pt'))
     
     return train_losses, val_losses, learning_rates
+
+def create_datasets_with_indices(config, train_indices=None, val_indices=None):
+    """Create datasets with optional indices for subsetting"""
+    train_dataset = None
+    val_dataset = None
+    
+    # Create training dataset
+    if os.path.exists(config['train_annotations']):
+        full_train_dataset = COCODataset(
+            config['train_annotations'],
+            config['train_image_dir'],
+            config['image_size']
+        )
+        
+        if train_indices is not None:
+            # Use provided indices (for resuming)
+            train_dataset = torch.utils.data.Subset(full_train_dataset, train_indices)
+        elif config.get('train_subset_size') is not None:
+            # Create new random subset
+            subset_size = min(config['train_subset_size'], len(full_train_dataset))
+            train_indices = random.sample(range(len(full_train_dataset)), subset_size)
+            train_dataset = torch.utils.data.Subset(full_train_dataset, train_indices)
+        else:
+            # Use full dataset
+            train_dataset = full_train_dataset
+    else:
+        train_dataset = DummyDataset(num_samples=800, image_size=config['image_size'])
+        train_indices = None
+    
+    # Create validation dataset
+    if os.path.exists(config['val_annotations']):
+        full_val_dataset = COCODataset(
+            config['val_annotations'],
+            config['val_image_dir'],
+            config['image_size']
+        )
+        
+        if val_indices is not None:
+            # Use provided indices (for resuming)
+            val_dataset = torch.utils.data.Subset(full_val_dataset, val_indices)
+        elif config.get('val_subset_size') is not None:
+            # Create new random subset
+            subset_size = min(config['val_subset_size'], len(full_val_dataset))
+            val_indices = random.sample(range(len(full_val_dataset)), subset_size)
+            val_dataset = torch.utils.data.Subset(full_val_dataset, val_indices)
+        else:
+            # Use full dataset
+            val_dataset = full_val_dataset
+    else:
+        val_dataset = None
+        val_indices = None
+    
+    return train_dataset, val_dataset, train_indices, val_indices
 
 def main(): #test annotation nya gaada
     # Configuration with training schedule parameters
@@ -460,39 +655,46 @@ def main(): #test annotation nya gaada
         'step_size': 50,       # Step size for step scheduler
         'gamma': 0.5,          # Learning rate decay factor
         
-        'train_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_train2017.json',
+        #'train_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_train2017.json',
+        'train_annotations': 'random',
         'train_image_dir': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/train2017',
-        'val_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json',
+        #'val_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json',
+        'val_annotations': 'val',
         'val_image_dir': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/val2017',
         # Subset sizes (set to None for full dataset)
         'train_subset_size': 10000,
         'val_subset_size': 1000,
+        
+        # Checkpointing configuration
+        'enable_checkpointing': True,
+        'checkpoint_dir': 'checkpoints',
+        'resume_from_checkpoint': 'checkpoints/checkpoint_epoch_2.pt', # Set to path of checkpoint to resume from
     }
     
     # Device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
+    # Check if resuming from checkpoint
+    train_indices = None
+    val_indices = None
+    if config['resume_from_checkpoint'] and os.path.exists(config['resume_from_checkpoint']):
+        print(f"Loading dataset indices from checkpoint: {config['resume_from_checkpoint']}")
+        checkpoint = torch.load(config['resume_from_checkpoint'], map_location='cpu')
+        train_indices = checkpoint.get('train_indices')
+        val_indices = checkpoint.get('val_indices')
+        print(f"Restored train indices: {len(train_indices) if train_indices else 'None'}")
+        print(f"Restored val indices: {len(val_indices) if val_indices else 'None'}")
+    
     # Create datasets
-    # train_dataset = COCODataset(
-    #     config['train_annotations'],
-    #     config['train_image_dir'],
-    #     config['image_size']
-    # )
-    if os.path.exists(config['train_annotations']):
-        train_dataset = COCODataset(
-            config['train_annotations'],
-            config['train_image_dir'],
-            config['image_size']
-        )
-        # Subset for training if requested
-        if config.get('train_subset_size') is not None:
-            subset_size = min(config['train_subset_size'], len(train_dataset))
-            indices = random.sample(range(len(train_dataset)), subset_size)
-            train_dataset = torch.utils.data.Subset(train_dataset, indices)
-    else:
-        train_dataset = DummyDataset(num_samples=800, image_size=config['image_size'])
-    #print("After create train dataset")
+    train_dataset, val_dataset, train_indices, val_indices = create_datasets_with_indices(
+        config, train_indices, val_indices
+    )
+    
+    print(f"Created train dataset with {len(train_dataset)} samples")
+    if val_dataset:
+        print(f"Created val dataset with {len(val_dataset)} samples")
+    
     train_loader = DataLoader(
         train_dataset,
         batch_size=config['batch_size'],
@@ -500,19 +702,10 @@ def main(): #test annotation nya gaada
         num_workers=config['num_workers'],
         pin_memory=True
     )
+    
     # Validation dataset (optional)
     val_loader = None
-    if os.path.exists(config['val_annotations']):
-        val_dataset = COCODataset(
-            config['val_annotations'],
-            config['val_image_dir'],
-            config['image_size']
-        )
-        # Subset for validation if requested
-        if config.get('val_subset_size') is not None:
-            subset_size = min(config['val_subset_size'], len(val_dataset))
-            indices = random.sample(range(len(val_dataset)), subset_size)
-            val_dataset = torch.utils.data.Subset(val_dataset, indices)
+    if val_dataset is not None:
         val_loader = DataLoader(
             val_dataset,
             batch_size=config['batch_size'],
@@ -535,7 +728,7 @@ def main(): #test annotation nya gaada
     print(f"Using scheduler: {config['scheduler']}")
     #torch.autograd.set_detect_anomaly(True)
     # Train
-    train_losses, val_losses, learning_rates = train_model(model, train_loader, val_loader, device, config)
+    train_losses, val_losses, learning_rates = train_model(model, train_loader, val_loader, device, config, train_indices, val_indices)
 
 if __name__ == "__main__":
     main() 
