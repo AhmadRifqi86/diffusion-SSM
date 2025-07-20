@@ -75,28 +75,38 @@ class SelectiveSSM(nn.Module):
         self.d_conv = d_conv
         self.d_inner = int(expand * d_model)
         
+        # Try to use official Mamba if available
+        if MAMBA_AVAILABLE:
+            self.mamba = Mamba(
+                d_model=d_model,
+                d_state=d_state,
+                d_conv=d_conv,
+                expand=expand,
+            )
+            self.use_official = True
+        else:
             # Fallback to custom implementation
-        self.in_proj = nn.Linear(d_model, self.d_inner * 2, bias=False)
-
-        self.conv1d = nn.Conv1d(
+            self.in_proj = nn.Linear(d_model, self.d_inner * 2, bias=False)
+            
+            self.conv1d = nn.Conv1d(
                 in_channels=self.d_inner,
                 out_channels=self.d_inner,
                 kernel_size=d_conv,
                 bias=True,
                 padding=d_conv - 1,
                 groups=self.d_inner,
-        )
-
-        self.x_proj = nn.Linear(self.d_inner, self.d_inner + 2 * d_state, bias=False)
-        self.dt_proj = nn.Linear(self.d_inner, self.d_inner, bias=True)
-
-        self.A_log = nn.Parameter(torch.log(torch.rand(self.d_inner, d_state)))
-        self.D = nn.Parameter(torch.ones(self.d_inner))
-
-        self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
-        self.act = nn.SiLU()
-        self.use_official = False
-
+            )
+            
+            self.x_proj = nn.Linear(self.d_inner, self.d_inner + 2 * d_state, bias=False)
+            self.dt_proj = nn.Linear(self.d_inner, self.d_inner, bias=True)
+            
+            self.A_log = nn.Parameter(torch.log(torch.rand(self.d_inner, d_state)))
+            self.D = nn.Parameter(torch.ones(self.d_inner))
+            
+            self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
+            self.act = nn.SiLU()
+            self.use_official = False
+        
     @print_forward_shapes
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.use_official:
@@ -114,29 +124,29 @@ class SelectiveSSM(nn.Module):
         
         xz = self.in_proj(x)
         x_inner, z = xz.chunk(2, dim=-1)
-
+        
         x_conv = self.conv1d(x_inner.transpose(-1, -2))[..., :seq_len].transpose(-1, -2)
         x_conv = self.act(x_conv)
-
+        
         x_dbl = self.x_proj(x_conv)
         delta, B, C = torch.split(x_dbl, [self.d_inner, self.d_state, self.d_state], dim=-1)
-
+        
         delta = F.softplus(self.dt_proj(delta))
-
+        
         y = self.selective_scan(x_conv, delta, B, C)
-
+        
         y = y * self.act(z)
         output = self.out_proj(y)
         return output
-
+    
     def selective_scan(self, x: torch.Tensor, delta: torch.Tensor, 
-                       B: torch.Tensor, C: torch.Tensor) -> torch.Tensor:
+                      B: torch.Tensor, C: torch.Tensor) -> torch.Tensor:
         """
         Perform serial selective scan (easier to debug)
         """
         batch_size, seq_len, d_inner = x.shape
         A = -torch.exp(self.A_log.float())
-
+        
         y = torch.zeros((batch_size, seq_len, d_inner), device=x.device, dtype=x.dtype)
         state = torch.zeros((batch_size, d_inner, self.d_state), device=x.device, dtype=x.dtype)
 
@@ -153,7 +163,7 @@ class SelectiveSSM(nn.Module):
             state = decay * state + Bu                       # [batch, d_inner, d_state]
             y_t = torch.sum(state * C_t.unsqueeze(1), dim=-1) + x_t * self.D  # [batch, d_inner]
             y[:, t] = y_t
-
+        
         return y
 
 class MambaBlock(nn.Module):
@@ -166,7 +176,7 @@ class MambaBlock(nn.Module):
         self.norm = nn.LayerNorm(dim)
         self.ssm = SelectiveSSM(dim, d_state, d_conv, expand)
         self.linear_out = nn.Linear(dim, dim)
-    
+        
     @print_forward_shapes
     def forward(self, x):
         # Layer norm first
@@ -212,17 +222,17 @@ class CrossAttention(nn.Module):
         h = self.heads
         if context is None:
             context = x  # fallback to self-attention
-
+        
         # Project to QKV
         q = self.to_q(x)
         k = self.to_k(context)
         v = self.to_v(context)
-
+        
         # Reshape for multi-head: [B, H, N, D]
         q = q.view(B, -1, h, self.dim_head).transpose(1, 2)
         k = k.view(B, -1, h, self.dim_head).transpose(1, 2)
         v = v.view(B, -1, h, self.dim_head).transpose(1, 2)
-
+        
         # Attention
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
         attn = F.softmax(dots, dim=-1)
@@ -230,7 +240,7 @@ class CrossAttention(nn.Module):
 
         # Merge heads: [B, N, H*D]
         out = out.transpose(1, 2).contiguous().view(B, -1, h * self.dim_head)
-
+        
         return self.to_out(out)  # [B, N, C]
 
 class ScaleShift(nn.Module):
@@ -257,7 +267,6 @@ class ScaleShift(nn.Module):
         else:
             scale_shift = self.to_scale_shift(context)
         scale, shift = scale_shift.chunk(2, dim=-1)
-
         # Reshape for broadcasting over sequence or spatial dimensions
         while scale.dim() < x.dim():
             scale = scale.unsqueeze(1)
@@ -289,7 +298,7 @@ class MainBlockParallel(nn.Module):
         self.norm_2 = nn.LayerNorm(dim)
         self.scale_1 = nn.Parameter(torch.ones(1))
         self.scale_2 = nn.Parameter(torch.ones(1))
-
+        
     def forward(self, x, context, timestep_emb=None):
         residual = x
         x_attn = self.cross_attn(x, context)
@@ -327,7 +336,7 @@ class MainBlockSerial(nn.Module):
         self.norm_2 = nn.LayerNorm(dim)
         self.scale_1 = nn.Parameter(torch.ones(1))
         self.scale_2 = nn.Parameter(torch.ones(1))
-
+        
     @print_forward_shapes
     def forward(self, x, context, timestep_emb=None):
         residual_1 = x
@@ -347,7 +356,7 @@ class TimestepEmbedding(nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
-
+        
     @print_forward_shapes  
     def forward(self, timesteps):
         half_dim = self.dim // 2
@@ -373,7 +382,7 @@ class DownBlock(nn.Module):
         self.from_main_block = nn.Linear(out_channels, out_channels)
         self.downsample = nn.Conv2d(out_channels, out_channels, 4, stride=2, padding=1)
         self.time_in_mainblock = time_in_mainblock
-    
+        
     @print_forward_shapes
     def forward(self, x, t, context=None):
         h = self.conv1(x)
@@ -412,7 +421,17 @@ class UpBlock(nn.Module):
 
         self.norm = nn.GroupNorm(8, out_channels)
         self.attn = CrossAttention(dim=out_channels, context_dim=context_dim)
-        self.mamba = MambaBlock(dim=out_channels)
+        
+        # Use official Mamba if available, otherwise fallback to MambaBlock
+        if MAMBA_AVAILABLE:
+            self.mamba = Mamba(
+                d_model=out_channels,
+                d_state=16,
+                d_conv=4,
+                expand=2,
+            )
+        else:
+            self.mamba = MambaBlock(dim=out_channels)
 
     @print_forward_shapes
     def forward(self, x, skip, t, context=None):
@@ -452,7 +471,7 @@ class MiddleBlock(nn.Module):
         self.main_block = MainBlockSerial(channels, context_dim)
         self.from_main_block = nn.Linear(channels, channels)
         self.time_in_mainblock = time_in_mainblock
-
+        
     @print_forward_shapes  
     def forward(self, x, t, context=None):
         h = self.conv1(x)
@@ -542,7 +561,7 @@ class UShapeMamba(nn.Module):
         
         self.context_proj = nn.Linear(context_dim, context_dim)
         self.input_proj = nn.Conv2d(in_channels, model_channels, 3, padding=1)
-
+        
         self.down_blocks = nn.ModuleList()
         down_channels = []
         in_ch = model_channels
@@ -570,29 +589,29 @@ class UShapeMamba(nn.Module):
             up_in_channels = out_ch
 
         self.output_proj = nn.Conv2d(model_channels, in_channels, 3, padding=1)
-
+        
     @print_forward_shapes
     def forward(self, x, timesteps, context=None):
         t = self.time_embed(timesteps)
-
+        
         if context is not None:
             context = self.context_proj(context)
             if context.dim() == 2:
                 context = context.unsqueeze(1)
-
+        
         h = self.input_proj(x)
-
+        
         skip_connections = []
         for block in self.down_blocks:
             h, skip = block(h, t, context)
             skip_connections.append(skip)
-
+        
         h = self.middle_block(h, t, context)
         #print("h shape after middle block", h.shape)
         for i, block in enumerate(self.up_blocks):
             skip = skip_connections[-(i + 1)]
             h = block(h, skip, t, context)
-
+        
         return self.output_proj(h)
 
 
@@ -611,16 +630,24 @@ class UShapeMambaDiffusion(nn.Module):
         
         # Load pre-trained CLIP encoder
         self.use_openai_clip = use_openai_clip
-        # if use_openai_clip:
-        #     # Use OpenAI CLIP
-        #     self.clip_model, self.clip_preprocess = clip.load("ViT-B/32")
-        #     self.clip_tokenizer = clip.tokenize
-        #     context_dim = self.clip_model.text_projection.out_features
-        # else:
-        #     # Use Hugging Face CLIP
-        self.clip_text_encoder = CLIPTextModel.from_pretrained(clip_model_name)
-        self.clip_tokenizer = CLIPTokenizer.from_pretrained(clip_model_name)
-        context_dim = self.clip_text_encoder.config.hidden_size
+        if use_openai_clip:
+            # Use OpenAI CLIP
+            try:
+                import clip
+                self.clip_model, self.clip_preprocess = clip.load("ViT-B/32")
+                self.clip_tokenizer = clip.tokenize
+                context_dim = self.clip_model.text_projection.out_features
+            except ImportError:
+                print("Warning: OpenAI CLIP not available, falling back to Hugging Face CLIP")
+                self.use_openai_clip = False
+                self.clip_text_encoder = CLIPTextModel.from_pretrained(clip_model_name)
+                self.clip_tokenizer = CLIPTokenizer.from_pretrained(clip_model_name)
+                context_dim = self.clip_text_encoder.config.hidden_size
+        else:
+            # Use Hugging Face CLIP
+            self.clip_text_encoder = CLIPTextModel.from_pretrained(clip_model_name)
+            self.clip_tokenizer = CLIPTokenizer.from_pretrained(clip_model_name)
+            context_dim = self.clip_text_encoder.config.hidden_size
         
         # Get VAE latent channels
         vae_latent_channels = self.vae.config.latent_channels
@@ -772,14 +799,14 @@ if __name__ == "__main__":
     
     # Forward pass
     with torch.no_grad():
-        denoised_latents, original_latents = model(images, timesteps, text_prompts)
+        predicted_noise, noise, latents = model(images, timesteps, text_prompts)
         
         # Sample new images
         generated_images = model.sample(["A futuristic city", "A peaceful lake"], num_inference_steps=20)
     
     print(f"Input images shape: {images.shape}")
-    print(f"Original latents shape: {original_latents.shape}")
-    print(f"Denoised latents shape: {denoised_latents.shape}")
+    print(f"Original latents shape: {latents.shape}")
+    print(f"Predicted noise shape: {predicted_noise.shape}")
     print(f"Generated images shape: {generated_images.shape}")
     print(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
     print(f"Total parameters: {sum(p.numel() for p in model.parameters()):,}")
