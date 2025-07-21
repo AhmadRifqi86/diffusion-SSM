@@ -176,5 +176,6 @@ tmp.py
 ssm_triton.py
 checkpoints_phasesched/
 checkpoints_cosineAnneal/
+checkpoints_cosineDecay/
 
 # End of https://www.toptal.com/developers/gitignore/api/python
