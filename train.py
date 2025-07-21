@@ -695,21 +695,21 @@ def main(): #test annotation nya gaada
         'step_size': 50,       # Step size for step scheduler
         'gamma': 0.5,          # Learning rate decay factor
         
-        #'train_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_train2017.json',
-        'train_annotations': 'random',
+        'train_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_train2017.json',
+        #'train_annotations': 'random',
         'train_image_dir': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/train2017',
-        #'val_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json',
-        'val_annotations': 'val',
+        'val_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json',
+        #'val_annotations': 'val',
         'val_image_dir': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/val2017',
         # Subset sizes (set to None for full dataset)
         'train_subset_size': 10000,
-        'val_subset_size': 1000,
+        'val_subset_size': 600,
         
         # Checkpointing configuration
         'enable_checkpointing': True,
         'checkpoint_dir': 'checkpoints',
-        #'resume_from_checkpoint':None,
-        'resume_from_checkpoint': 'checkpoints/checkpoint_epoch_4.pt', # Set to path of checkpoint to resume from
+        'resume_from_checkpoint':None,
+        #'resume_from_checkpoint': 'checkpoints/checkpoint_epoch_4.pt', # Set to path of checkpoint to resume from
     }
     
     # Device
@@ -769,6 +769,27 @@ def main(): #test annotation nya gaada
     #torch.autograd.set_detect_anomaly(True)
     # Train
     train_losses, val_losses, learning_rates = train_model(model, train_loader, val_loader, device, config, train_indices, val_indices)
+
+    # Test the trained model: generate a few samples
+    print("\nTesting the trained model with sample text prompts...")
+    test_prompts = [
+        "A beautiful landscape with mountains",
+        "A futuristic city at night",
+        "A cat sitting on a sofa"
+    ]
+    model.eval()
+    with torch.no_grad():
+        generated_images = model.sample(test_prompts, num_inference_steps=20)
+    print(f"Generated images shape: {generated_images.shape}")
+    # Optionally, save or visualize the images here
+    # Example: save the first image using torchvision.utils.save_image if torchvision is available
+    try:
+        from torchvision.utils import save_image
+        for i, img in enumerate(generated_images):
+            save_image((img.clamp(-1, 1) + 1) / 2, f"generated_sample_{i}.png")
+        print("Sample images saved as generated_sample_*.png")
+    except ImportError:
+        print("torchvision not available, skipping image saving.")
 
 if __name__ == "__main__":
     main() 
