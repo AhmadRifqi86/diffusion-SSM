@@ -225,7 +225,7 @@ def create_scheduler(optimizer, config):
             T_max=config['num_epochs'],
             eta_min=config.get('eta_min', 0)
         )
-    elif scheduler_type == 'linear':
+    elif scheduler_type == 'linear': #maybe change this to reduceLRonPlateau
         return LinearScheduler(
             optimizer,
             config['num_epochs'],
@@ -245,13 +245,14 @@ def create_scheduler(optimizer, config):
             optimizer,
             gamma=config.get('gamma', 0.95)
         )
+    #elif scheduler_type == 'cosine-decay'
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}")
 
 def train_model(model, train_loader, val_loader, device, config, train_indices=None, val_indices=None):
     """Training loop with 3-phase schedule and early stopping"""
     
-    # Setup training components
+    # Setup training components, make configurable
     optimizer = torch.optim.AdamW(
         model.parameters(), 
         lr=config['learning_rate'],
@@ -387,7 +388,7 @@ def train_model(model, train_loader, val_loader, device, config, train_indices=N
                 
                 # Gradient clipping
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0) #mungkin ganti jadi 0.5
                 
                 scaler.step(optimizer)
                 scaler.update()
@@ -462,7 +463,7 @@ def train_model(model, train_loader, val_loader, device, config, train_indices=N
         logger.info(f"Epoch {epoch+1}/{config['num_epochs']} ({phase}): "
                    f"Train Loss: {avg_loss:.4f}, "
                    f"Val Loss: {val_loss_str}, "
-                   f"LR: {current_lr:.2e}")
+                   f"LR: {optimizer.param_groups[0]['lr']:.2e}")
         
         # Save best checkpoint
         if val_loss and val_loss < best_loss:
@@ -668,7 +669,7 @@ def create_datasets_with_indices(config, train_indices=None, val_indices=None):
 def main(): #test annotation nya gaada
     # Configuration with training schedule parameters
     config = {
-        'learning_rate': 1e-4,
+        'learning_rate': 2e-5,
         'weight_decay': 0.01,
         'num_epochs': 250,  # Increased for better training schedule
         'batch_size': 8,
@@ -678,7 +679,7 @@ def main(): #test annotation nya gaada
         'min_delta': 1e-4,  # Minimum improvement for early stopping
         
         # Scheduler configuration
-        'scheduler': 'phase',  # Options: 'phase', 'cosine', 'linear', 'step', 'exponential'
+        'scheduler': 'cosine',  # Options: 'phase', 'cosine', 'linear', 'step', 'exponential'
         
         # Phase scheduler parameters
         'warmup_ratio': 0.2,  # 20% warmup for phase scheduler
@@ -707,9 +708,9 @@ def main(): #test annotation nya gaada
         
         # Checkpointing configuration
         'enable_checkpointing': True,
-        'checkpoint_dir': 'checkpoints',
+        'checkpoint_dir': 'checkpoints_cosineAnneal', #Ganti jadi checkpoints_phasesched, checkpoints_customlr_1, 
         'resume_from_checkpoint':None,
-        #'resume_from_checkpoint': 'checkpoints/checkpoint_epoch_4.pt', # Set to path of checkpoint to resume from
+        #'resume_from_checkpoint': 'checkpoints_phasesched/checkpoint_epoch_23.pt', # Set to path of checkpoint to resume from
     }
     
     # Device

@@ -138,7 +138,7 @@ class MambaBlock(nn.Module):
         x_out = self.linear_out(x_ssm)
         return x_out
 
-class CrossAttention(nn.Module):
+class CrossAttention(nn.Module): #maybe put dropout here
     """
     Cross-attention module for conditioning on text embeddings.
     Handles x of shape [B, N, C] or [B, C, H, W].
@@ -263,7 +263,7 @@ class MainBlockParallel(nn.Module):
         output = residual + x_attn + x_mamba
         return output
 
-class MainBlockSerial(nn.Module):
+class MainBlockSerial(nn.Module):  #Maybe put dropout here
     """
     Main block implementing the architecture from the second image, now supports optional timestep embedding.
     Uses official Mamba if available, otherwise falls back to MambaBlock.
