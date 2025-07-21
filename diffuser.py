@@ -213,7 +213,7 @@ class UShapeMamba(nn.Module):
                  model_channels=160,
                  time_embed_dim=160,
                  context_dim=768,
-                 dropout=0.0
+                 dropout=0.0,
                  use_shared_time_embedding=True):  # New parameter to control time embedding approach
         super().__init__()
         

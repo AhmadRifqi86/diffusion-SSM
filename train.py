@@ -720,8 +720,8 @@ def main(): #test annotation nya gaada
         # Checkpointing configuration
         'enable_checkpointing': True,
         'checkpoint_dir': 'checkpoints_cosineAnneal', #Ganti jadi checkpoints_phasesched, checkpoints_customlr_1, 
-        'resume_from_checkpoint':None,
-        #'resume_from_checkpoint': 'checkpoints_phasesched/checkpoint_epoch_23.pt', # Set to path of checkpoint to resume from
+        #'resume_from_checkpoint':None,
+        'resume_from_checkpoint': 'checkpoints_cosineAnneal/checkpoint_epoch_6.pt', # Set to path of checkpoint to resume from
     }
     
     # Device

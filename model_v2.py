@@ -59,7 +59,7 @@ class UShapeMambaDiffusion(nn.Module):
                  clip_model_name="openai/clip-vit-base-patch32",
                  model_channels=160,
                  num_train_timesteps=1000,
-                 dropout=0.0
+                 dropout=0.0,
                  use_shared_time_embedding=False):  # Removed use_openai_clip parameter
         super().__init__()
         
