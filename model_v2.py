@@ -59,6 +59,7 @@ class UShapeMambaDiffusion(nn.Module):
                  clip_model_name="openai/clip-vit-base-patch32",
                  model_channels=160,
                  num_train_timesteps=1000,
+                 dropout=0.0
                  use_shared_time_embedding=False):  # Removed use_openai_clip parameter
         super().__init__()
         
@@ -79,6 +80,7 @@ class UShapeMambaDiffusion(nn.Module):
             in_channels=vae_latent_channels,
             model_channels=model_channels,
             context_dim=context_dim,
+            dropout=dropout,
             use_shared_time_embedding=use_shared_time_embedding
         )
         

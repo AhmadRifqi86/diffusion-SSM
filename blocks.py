@@ -299,7 +299,7 @@ class MainBlockSerial(nn.Module):  #Maybe put dropout here
         x_attn = self.cross_attn(attn_inp, context)
         x_attn = self.scale_shift_2(x_attn, context.mean(dim=1), timestep_emb)
         x_attn = self.norm_2(x_attn)
-        x_attn = x_attn * self.scale_2
+        x_attn = x_attn * self.scale_2 #after this could be dropout
         output = x_attn + attn_inp
         return output
 

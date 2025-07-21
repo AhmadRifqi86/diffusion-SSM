@@ -21,7 +21,7 @@ class TimestepEmbedding(nn.Module):
         return embeddings
 
 class DownBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, time_dim, context_dim, time_in_mainblock=False, use_shared_time_embedding=True):
+    def __init__(self, in_channels, out_channels, time_dim, context_dim, dropout,time_in_mainblock=False, use_shared_time_embedding=True):
         super().__init__()
         self.use_shared_time_embedding = use_shared_time_embedding
         
@@ -47,20 +47,21 @@ class DownBlock(nn.Module):
         self.from_main_block = nn.Linear(out_channels, out_channels)
         self.downsample = nn.Conv2d(out_channels, out_channels, 4, stride=2, padding=1)
         self.time_in_mainblock = time_in_mainblock
+        self.dropout=nn.Dropout(p=dropout)
         
     @print_forward_shapes
     def forward(self, x, t, context=None):
         h = self.conv1(x)
         h = self.norm1(h)
-        h = F.silu(h)
+        h = self.dropout(F.silu(h))
+        
         time_emb = self.time_mlp(t)
-
         if not self.time_in_mainblock:
             h = h + time_emb[:, :, None, None]
 
         h = self.conv2(h)
         h = self.norm2(h)
-        h = F.silu(h)
+        h = self.dropout(F.silu(h))
 
         if context is not None:
             B, C, H, W = h.shape
@@ -78,7 +79,7 @@ class DownBlock(nn.Module):
         return self.downsample(h), h
 
 class UpBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, skip_channels, time_embed_dim, context_dim, time_in_mainblock=False, use_shared_time_embedding=True):
+    def __init__(self, in_channels, out_channels, skip_channels, time_embed_dim, context_dim,dropout, time_in_mainblock=False, use_shared_time_embedding=True):
         super().__init__()
         self.use_shared_time_embedding = use_shared_time_embedding
         
@@ -107,6 +108,7 @@ class UpBlock(nn.Module):
         self.main_block = MainBlockSerial(out_channels, context_dim)
         self.from_main_block = nn.Linear(out_channels, out_channels)
         self.time_in_mainblock = time_in_mainblock
+        self.dropout=nn.Dropout(p=dropout)
         
     @print_forward_shapes
     def forward(self, x, skip, t, context=None):
@@ -114,7 +116,7 @@ class UpBlock(nn.Module):
         x = torch.cat([x, skip], dim=1)
         x = self.conv1(x)
         x = self.norm1(x)
-        x = F.silu(x)
+        x = self.dropout(F.silu(x))
         
         # Process time embedding - consistent with DownBlock and MiddleBlock
         time_emb = self.time_mlp(t)
@@ -124,7 +126,7 @@ class UpBlock(nn.Module):
         
         x = self.conv2(x)
         x = self.norm2(x)
-        x = F.silu(x)
+        x = self.dropout(F.silu(x))
         
         # Apply Main Block - consistent with DownBlock and MiddleBlock
         if context is not None:
@@ -144,7 +146,7 @@ class UpBlock(nn.Module):
 
 
 class MiddleBlock(nn.Module):
-    def __init__(self, channels, time_dim, context_dim, time_in_mainblock=False, use_shared_time_embedding=True):
+    def __init__(self, channels, time_dim, context_dim,dropout, time_in_mainblock=False, use_shared_time_embedding=True):
         super().__init__()
         self.use_shared_time_embedding = use_shared_time_embedding
         
@@ -171,22 +173,22 @@ class MiddleBlock(nn.Module):
         self.main_block = MainBlockSerial(channels, context_dim)
         self.from_main_block = nn.Linear(channels, channels)
         self.time_in_mainblock = time_in_mainblock
+        self.dropout=nn.Dropout(p=dropout)
         
     @print_forward_shapes  
     def forward(self, x, t, context=None):
         h = self.conv1(x)
         h = self.norm1(h)
-        h = F.silu(h)
+        h = self.dropout(F.silu(h))
         
         # Add time embedding
         time_emb = self.time_mlp(t)
-
         if not self.time_in_mainblock:
             h = h + time_emb[:, :, None, None]
         
         h = self.conv2(h)
         h = self.norm2(h)
-        h = F.silu(h)
+        h = self.dropout(F.silu(h))
         
         # Apply Main Block
         if context is not None:
@@ -211,6 +213,7 @@ class UShapeMamba(nn.Module):
                  model_channels=160,
                  time_embed_dim=160,
                  context_dim=768,
+                 dropout=0.0
                  use_shared_time_embedding=True):  # New parameter to control time embedding approach
         super().__init__()
         
@@ -240,13 +243,13 @@ class UShapeMamba(nn.Module):
         for i in range(4):
             out_ch = model_channels * (2 ** i)
             self.down_blocks.append(
-                DownBlock(in_ch, out_ch, time_embed_dim, context_dim, 
+                DownBlock(in_ch, out_ch, time_embed_dim, context_dim,dropout, 
                          use_shared_time_embedding=use_shared_time_embedding)
             )
             down_channels.append(out_ch)
             in_ch = out_ch
 
-        self.middle_block = MiddleBlock(in_ch, time_embed_dim, context_dim, 
+        self.middle_block = MiddleBlock(in_ch, time_embed_dim, context_dim,dropout,
                                        use_shared_time_embedding=use_shared_time_embedding)
 
         # Reverse for up path
@@ -257,7 +260,7 @@ class UShapeMamba(nn.Module):
         for i, skip_ch in enumerate(skip_channels):
             out_ch = model_channels * (2 ** (2 - i)) if i < 3 else model_channels
             self.up_blocks.append(
-                UpBlock(up_in_channels, out_ch, skip_ch, time_embed_dim, context_dim, 
+                UpBlock(up_in_channels, out_ch, skip_ch, time_embed_dim, context_dim,dropout, 
                        time_in_mainblock=False, use_shared_time_embedding=use_shared_time_embedding)
             )
             up_in_channels = out_ch

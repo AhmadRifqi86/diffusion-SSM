@@ -17,6 +17,7 @@ from torchvision import transforms
 from model_v2 import UShapeMambaDiffusion
 import numpy as np
 from collections import deque
+from lrscheduler import CosineAnnealingWarmRestartsWithDecay
 
 #pip install -e . --no-build-isolation   #Clone repo mamba-ssm habis itu pip install tanpa build isolation
 
@@ -245,7 +246,15 @@ def create_scheduler(optimizer, config):
             optimizer,
             gamma=config.get('gamma', 0.95)
         )
-    #elif scheduler_type == 'cosine-decay'
+    elif scheduler_type == 'cosine-decay':
+        return CosineAnnealingWarmRestartsWithDecay(
+            optimizer,
+            T_0=config.get('T_0', 10),
+            T_mult=config.get('T_mult', 1),
+            eta_min=config.get('eta_min', 1e-6),
+            decay=config.get('decay', 0.9),
+            freq_mult=config.get('freq_mult', 1.0)
+        )
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}")
 
@@ -346,6 +355,8 @@ def train_model(model, train_loader, val_loader, device, config, train_indices=N
         logger.info(f"Cosine annealing with T_max={config['num_epochs']}, eta_min={config.get('eta_min', 0)}")
     elif scheduler_type == 'linear':
         logger.info(f"Linear decay with {scheduler.warmup_epochs} warmup epochs")
+    elif scheduler_type == 'cosine-decay':
+        logger.info(f"Custom Cosine Annealing with T_0={config.get('T_0', 10)}, decay={config.get('decay', 0.9)}")
     
     for epoch in range(start_epoch, config['num_epochs']):
         model.train()
