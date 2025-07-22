@@ -160,7 +160,7 @@ def create_scheduler(optimizer, config):
     elif scheduler_type == 'cosine-decay':
         sched_1 = torch.optim.lr_scheduler.LinearLR(
             optimizer,
-            start_factor=optimizer.param_groups[0]['lr'] / config['learning_rate'],
+            start_factor=config['init_lr'] / config['learning_rate'],
             end_factor=1.0,
             total_iters=int(config.get('warmup_epochs', 10)*config.get('num_epochs'))
         )
@@ -187,7 +187,7 @@ def train_model(model, train_loader, val_loader, device, config, train_indices=N
     # Setup training components, make configurable
     optimizer = torch.optim.AdamW(
         model.parameters(), 
-        lr=config.get('init_lr',1e-7),
+        lr=config.get('learning_rate',1e-7),
         weight_decay=config.get('weight_decay', 0.01)
     )
     
@@ -607,8 +607,8 @@ def main(): #test annotation nya gaada
         'init_lr': 1e-7,
         'learning_rate': 5e-5,
         'weight_decay': 0.01,
-        'num_epochs': 250,  # Increased for better training schedule
-        'warmup_epochs': 0.3,  # Warmup phase for scheduler
+        'num_epochs': 200,  # Increased for better training schedule
+        'warmup_epochs': 0.15,  # Warmup phase for scheduler
         'optimizer': 'adamw',  # Options: 'adamw', 'lion'
         'batch_size': 8,
         'image_size': 256,
