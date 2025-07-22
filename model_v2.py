@@ -113,19 +113,24 @@ class UShapeMambaDiffusion(nn.Module):
             images = self.vae.decode(latents).sample
         return images
     
-    def encode_text(self, text_prompts):
+    def encode_text(self, text_prompts, max_length=None, padding=True):
         """Encode text prompts using Hugging Face CLIP"""
         with torch.no_grad():
+            tokenizer_kwargs = {
+                "padding": padding,
+                "truncation": True,
+                "return_tensors": "pt"
+            }
+            if max_length is not None:
+                tokenizer_kwargs["max_length"] = max_length
             text_inputs = self.clip_tokenizer(
                 text_prompts, 
-                padding=True, 
-                truncation=True, 
-                return_tensors="pt"
+                **tokenizer_kwargs
             )
         # Move each tensor in the dict to the correct device
         text_inputs = {k: v.to(next(self.parameters()).device) for k, v in text_inputs.items()}     
         text_features = self.clip_text_encoder(**text_inputs).last_hidden_state
-        
+
         return text_features
     
     @print_forward_shapes
@@ -158,11 +163,15 @@ class UShapeMambaDiffusion(nn.Module):
         
         # Encode text (conditional)
         text_embeddings = self.encode_text(text_prompts)
+        print(f"Text embeddings shape: {text_embeddings.shape}")
 
         # Encode unconditional context (empty strings)
-        uncond_prompts = [""] * batch_size
-        uncond_embeddings = self.encode_text(uncond_prompts)
-        
+        uncond_embeddings = self.encode_text(
+            [""] * batch_size, 
+            max_length=text_embeddings.shape[1], 
+            padding='max_length'
+        )
+        print(f"Unconditional embeddings shape: {uncond_embeddings.shape}")
         # Create latent shape
         latent_height = height // 8  # VAE downsamples by 8
         latent_width = width // 8

@@ -49,6 +49,7 @@ class Lion(Optimizer):
                 exp_avg.lerp_(grad, 1 - beta2)
         return loss
 
+#Add warmup period before cosine annealing
 class CosineAnnealingWarmRestartsWithDecay(torch.optim.lr_scheduler._LRScheduler):
     def __init__(self, optimizer, T_0, T_mult=1, eta_min=0, decay=0.9, freq_mult=0.9, last_epoch=-1):
         self.T_0 = T_0

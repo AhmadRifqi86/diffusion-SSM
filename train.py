@@ -580,7 +580,7 @@ def main(): #test annotation nya gaada
     config = {
         'learning_rate': 2e-5,
         'weight_decay': 0.01,
-        'num_epochs': 250,  # Increased for better training schedule
+        'num_epochs': 10,  # Increased for better training schedule
         'batch_size': 8,
         'image_size': 256,
         'num_workers': 2,
@@ -612,14 +612,14 @@ def main(): #test annotation nya gaada
         #'val_annotations': 'val',
         'val_image_dir': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/val2017',
         # Subset sizes (set to None for full dataset)
-        'train_subset_size': 10000,
-        'val_subset_size': 600,
+        'train_subset_size': 100,
+        'val_subset_size': 40,
         
         # Checkpointing configuration
-        'enable_checkpointing': True,
+        'enable_checkpointing': False,
         'checkpoint_dir': 'checkpoints_cosineDecay', #Ganti jadi checkpoints_phasesched, checkpoints_customlr_1, 
         'resume_from_checkpoint':None,
-        #'resume_from_checkpoint': 'checkpoints_cosineAnneal/checkpoint_epoch_7.pt', # Set to path of checkpoint to resume from
+        #'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_68.pt', # Set to path of checkpoint to resume from
     }
     
     # Device
