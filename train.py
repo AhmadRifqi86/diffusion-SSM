@@ -122,7 +122,8 @@ def create_scheduler(optimizer, config):
             optimizer,
             start_factor=optimizer.param_groups[0]['lr'] / config['learning_rate'],
             end_factor=1.0,
-            total_iters=config.get('warmup_epochs', 10)
+            #total_iters=config.get('warmup_epochs', 10)
+            total_iters=int(config.get('warmup_epochs', 10)*config.get('num_epochs'))
         )
         sched_2 = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
@@ -132,7 +133,8 @@ def create_scheduler(optimizer, config):
         return torch.optim.lr_scheduler.SequentialLR(
             optimizer,
             schedulers=[sched_1, sched_2],
-            milestones=[config.get('warmup_epochs', 10)]
+            #milestones=[config.get('warmup_epochs', 10)]
+            milestones=[int(config.get('warmup_epochs', 10)*config.get('num_epochs'))]
         )
 
     elif scheduler_type == 'linear': #maybe change this to reduceLRonPlateau
@@ -160,7 +162,7 @@ def create_scheduler(optimizer, config):
             optimizer,
             start_factor=optimizer.param_groups[0]['lr'] / config['learning_rate'],
             end_factor=1.0,
-            total_iters=config.get('warmup_epochs', 10)
+            total_iters=int(config.get('warmup_epochs', 10)*config.get('num_epochs'))
         )
         sched_2 = CosineAnnealingWarmRestartsWithDecay(
             optimizer,
@@ -173,7 +175,8 @@ def create_scheduler(optimizer, config):
         return torch.optim.lr_scheduler.SequentialLR(
             optimizer,
             schedulers=[sched_1, sched_2],
-            milestones=[config.get('warmup_epochs', 10)]
+            #milestones=[config.get('warmup_epochs', 10)]
+            milestones=[int(config.get('warmup_epochs', 10)*config.get('num_epochs'))]
         )
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}")
@@ -604,8 +607,8 @@ def main(): #test annotation nya gaada
         'init_lr': 1e-7,
         'learning_rate': 5e-5,
         'weight_decay': 0.01,
-        'num_epochs': 10,  # Increased for better training schedule
-        'warmup_epochs': 5,  # Warmup phase for scheduler
+        'num_epochs': 250,  # Increased for better training schedule
+        'warmup_epochs': 0.3,  # Warmup phase for scheduler
         'optimizer': 'adamw',  # Options: 'adamw', 'lion'
         'batch_size': 8,
         'image_size': 256,
