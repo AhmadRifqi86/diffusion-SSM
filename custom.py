@@ -4,7 +4,7 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 # --- Lion Optimizer Implementation ---
 from torch.optim.optimizer import Optimizer
 from typing import Optional, Callable, Tuple
-
+import numpy as np
 class Lion(Optimizer):
     """
     Lion optimizer (EvoLved Sign Momentum)
