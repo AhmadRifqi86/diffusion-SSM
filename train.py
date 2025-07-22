@@ -120,7 +120,7 @@ def create_scheduler(optimizer, config):
         # Use PyTorch's built-in cosine annealing
         sched_1 = torch.optim.lr_scheduler.LinearLR(
             optimizer,
-            start_factor=optimizer.param_groups[0]['lr'] / int(config.get('learning_rate', 1e-5)),
+            start_factor=optimizer.param_groups[0]['lr'] / config['learning_rate'],
             end_factor=1.0,
             total_iters=config.get('warmup_epochs', 10)
         )
@@ -158,7 +158,7 @@ def create_scheduler(optimizer, config):
     elif scheduler_type == 'cosine-decay':
         sched_1 = torch.optim.lr_scheduler.LinearLR(
             optimizer,
-            start_factor=optimizer.param_groups[0]['lr'] / int(config.get('learning_rate', 1e-5)),
+            start_factor=optimizer.param_groups[0]['lr'] / config['learning_rate'],
             end_factor=1.0,
             total_iters=config.get('warmup_epochs', 10)
         )
@@ -184,7 +184,7 @@ def train_model(model, train_loader, val_loader, device, config, train_indices=N
     # Setup training components, make configurable
     optimizer = torch.optim.AdamW(
         model.parameters(), 
-        lr=config['learning_rate'],
+        lr=config.get('init_lr',1e-7),
         weight_decay=config.get('weight_decay', 0.01)
     )
     
@@ -601,6 +601,7 @@ def create_datasets_with_indices(config, train_indices=None, val_indices=None):
 def main(): #test annotation nya gaada
     # Configuration with training schedule parameters
     config = {
+        'init_lr': 1e-7,
         'learning_rate': 5e-5,
         'weight_decay': 0.01,
         'num_epochs': 10,  # Increased for better training schedule
