@@ -163,7 +163,7 @@ class UShapeMambaDiffusion(nn.Module):
         
         # Encode text (conditional)
         text_embeddings = self.encode_text(text_prompts)
-        print(f"Text embeddings shape: {text_embeddings.shape}")
+        #print(f"Text embeddings shape: {text_embeddings.shape}")
 
         # Encode unconditional context (empty strings)
         uncond_embeddings = self.encode_text(
@@ -171,7 +171,7 @@ class UShapeMambaDiffusion(nn.Module):
             max_length=text_embeddings.shape[1], 
             padding='max_length'
         )
-        print(f"Unconditional embeddings shape: {uncond_embeddings.shape}")
+        #print(f"Unconditional embeddings shape: {uncond_embeddings.shape}")
         # Create latent shape
         latent_height = height // 8  # VAE downsamples by 8
         latent_width = width // 8

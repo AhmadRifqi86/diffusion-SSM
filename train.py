@@ -17,7 +17,7 @@ from torchvision import transforms
 from model_v2 import UShapeMambaDiffusion
 import numpy as np
 from collections import deque
-from custom import CosineAnnealingWarmRestartsWithDecay, LinearScheduler, PhaseScheduler, EarlyStopping
+from custom import Lion, CosineAnnealingWarmRestartsWithDecay, LinearScheduler, PhaseScheduler, EarlyStopping
 
 #pip install -e . --no-build-isolation   #Clone repo mamba-ssm habis itu pip install tanpa build isolation
 
@@ -144,13 +144,24 @@ def create_scheduler(optimizer, config):
             gamma=config.get('gamma', 0.95)
         )
     elif scheduler_type == 'cosine-decay':
-        return CosineAnnealingWarmRestartsWithDecay(
+        sched_1 = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=optimizer.param_groups[0]['lr'] / int(config.get('target_lr', 1e-5)),
+            end_factor=1.0,
+            total_iters=config.get('warmup_epochs', 10)
+        )
+        sched_2 = CosineAnnealingWarmRestartsWithDecay(
             optimizer,
             T_0=config.get('T_0', 10),
             T_mult=config.get('T_mult', 1),
             eta_min=config.get('eta_min', 1e-6),
             decay=config.get('decay', 0.9),
             freq_mult=config.get('freq_mult', 1.0)
+        )
+        return torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[sched_1, sched_2],
+            milestones=[config.get('warmup_epochs', 10)]
         )
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}")
@@ -578,9 +589,11 @@ def create_datasets_with_indices(config, train_indices=None, val_indices=None):
 def main(): #test annotation nya gaada
     # Configuration with training schedule parameters
     config = {
-        'learning_rate': 2e-5,
+        'learning_rate': 5e-5,
         'weight_decay': 0.01,
         'num_epochs': 10,  # Increased for better training schedule
+        'warmup_epochs': 5,  # Warmup phase for scheduler
+        'optimizer': 'adamw',  # Options: 'adamw', 'lion'
         'batch_size': 8,
         'image_size': 256,
         'num_workers': 2,
