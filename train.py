@@ -118,11 +118,23 @@ def create_scheduler(optimizer, config):
         )
     elif scheduler_type == 'cosine':
         # Use PyTorch's built-in cosine annealing
-        return torch.optim.lr_scheduler.CosineAnnealingLR(
+        sched_1 = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=optimizer.param_groups[0]['lr'] / int(config.get('learning_rate', 1e-5)),
+            end_factor=1.0,
+            total_iters=config.get('warmup_epochs', 10)
+        )
+        sched_2 = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
             T_max=config['num_epochs'],
             eta_min=config.get('eta_min', 0)
         )
+        return torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[sched_1, sched_2],
+            milestones=[config.get('warmup_epochs', 10)]
+        )
+
     elif scheduler_type == 'linear': #maybe change this to reduceLRonPlateau
         return LinearScheduler(
             optimizer,
@@ -146,7 +158,7 @@ def create_scheduler(optimizer, config):
     elif scheduler_type == 'cosine-decay':
         sched_1 = torch.optim.lr_scheduler.LinearLR(
             optimizer,
-            start_factor=optimizer.param_groups[0]['lr'] / int(config.get('target_lr', 1e-5)),
+            start_factor=optimizer.param_groups[0]['lr'] / int(config.get('learning_rate', 1e-5)),
             end_factor=1.0,
             total_iters=config.get('warmup_epochs', 10)
         )
