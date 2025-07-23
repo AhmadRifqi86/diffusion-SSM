@@ -650,9 +650,10 @@ def main(): #test annotation nya gaada
         
         # Checkpointing configuration
         'enable_checkpointing': True,
+        #'enable_checkpointing': False,
         'checkpoint_dir': 'checkpoints_cosineDecay', #Ganti jadi checkpoints_phasesched, checkpoints_customlr_1, 
-        'resume_from_checkpoint':None,
-        #'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_38.pt', # Set to path of checkpoint to resume from
+        #'resume_from_checkpoint':None,
+        'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_24.pt', # Set to path of checkpoint to resume from
     }
     
     # Device
