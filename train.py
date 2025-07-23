@@ -634,21 +634,21 @@ def main(): #test annotation nya gaada
         'step_size': 50,       # Step size for step scheduler
         'gamma': 0.5,          # Learning rate decay factor
         
-        #'train_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_train2017.json',
-        'train_annotations': 'random',
+        'train_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_train2017.json',
+        #'train_annotations': 'random',
         'train_image_dir': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/train2017',
-        #'val_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json',
-        'val_annotations': 'val',
+        'val_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json',
+        #'val_annotations': 'val',
         'val_image_dir': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/val2017',
         # Subset sizes (set to None for full dataset)
         'train_subset_size': 10000,
         'val_subset_size': 500,
         
         # Checkpointing configuration
-        'enable_checkpointing': False,
+        'enable_checkpointing': True,
         'checkpoint_dir': 'checkpoints_cosineDecay', #Ganti jadi checkpoints_phasesched, checkpoints_customlr_1, 
-        #'resume_from_checkpoint':None,
-        'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_38.pt', # Set to path of checkpoint to resume from
+        'resume_from_checkpoint':None,
+        #'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_38.pt', # Set to path of checkpoint to resume from
     }
     
     # Device
