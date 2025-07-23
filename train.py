@@ -118,12 +118,14 @@ def create_scheduler(optimizer, config):
         )
     elif scheduler_type == 'cosine':
         # Use PyTorch's built-in cosine annealing
+        print(f"sched_1 total_iters: {int(config.get('warmup_ratio', 0.1)*config.get('num_epochs'))}")
         sched_1 = torch.optim.lr_scheduler.LinearLR(
             optimizer,
             start_factor=config['init_lr'] / config['learning_rate'],
             end_factor=1.0,
-            total_iters=int(config.get('warmup_epochs', 10)*config.get('num_epochs'))
+            total_iters=int(config.get('warmup_ratio', 0.1)*config.get('num_epochs'))
         )
+        print(f"sched_2 starting from epoch: {int(config.get('warmup_ratio', 0.1)*config.get('num_epochs'))}")
         sched_2 = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
             T_max=config['num_epochs'],
@@ -157,12 +159,14 @@ def create_scheduler(optimizer, config):
             gamma=config.get('gamma', 0.95)
         )
     elif scheduler_type == 'cosine-decay':
+        print(f"sched_1 total_iters: {int(config.get('warmup_ratio', 0.1)*config.get('num_epochs'))}")
         sched_1 = torch.optim.lr_scheduler.LinearLR(
             optimizer,
             start_factor=config['init_lr'] / config['learning_rate'],
             end_factor=1.0,
-            total_iters=int(config.get('warmup_epochs', 10)*config.get('num_epochs'))
+            total_iters=int(config.get('warmup_ratio', 0.1)*config.get('num_epochs'))
         )
+        print(f"sched_2 starting from epoch: {int(config.get('warmup_ratio', 0.1)*config.get('num_epochs'))}")
         sched_2 = CosineAnnealingWarmRestartsWithDecay(
             optimizer,
             T_0=config.get('T_0', 10),
@@ -176,7 +180,7 @@ def create_scheduler(optimizer, config):
             optimizer,
             schedulers=[sched_1, sched_2],
             #milestones=[config.get('warmup_epochs', 10)]
-            milestones=[int(config.get('warmup_epochs', 10)*config.get('num_epochs'))]
+            milestones=[1+int(config.get('warmup_ratio', 0.1)*config.get('num_epochs'))]
         )
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}")
@@ -496,36 +500,36 @@ def train_model(model, train_loader, val_loader, device, config, train_indices=N
             logger.info(f"Checkpoint saved: {checkpoint_path}")
         
         # Regular checkpoint every 10 epochs (if not already saved)
-        elif (epoch + 1) % 10 == 0:
-            checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch+1}.pt')
+        # elif (epoch + 1) % 10 == 0:
+        #     checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch+1}.pt')
             
-            # Delete previous epoch-specific checkpoint if it exists
-            if os.path.exists(checkpoint_path):
-                os.remove(checkpoint_path)
+        #     # Delete previous epoch-specific checkpoint if it exists
+        #     if os.path.exists(checkpoint_path):
+        #         os.remove(checkpoint_path)
                 
-            torch.save({
-                'epoch': epoch + 1,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict() if hasattr(scheduler, 'state_dict') else None,
-                'scheduler_epoch': getattr(scheduler, 'current_epoch', None),
-                'scaler_state_dict': scaler.state_dict(),
-                'loss': avg_loss,
-                'val_loss': val_loss,
-                'config': config,
-                'phase': phase,
-                'train_losses': train_losses,
-                'val_losses': val_losses,
-                'learning_rates': learning_rates,
-                'best_loss': best_loss,
-                'early_stopping_state': {
-                    'best_loss': early_stopping.best_loss,
-                    'counter': early_stopping.counter,
-                    'best_weights': early_stopping.best_weights
-                },
-                'train_indices': train_indices,
-                'val_indices': val_indices
-            }, checkpoint_path)
+        #     torch.save({
+        #         'epoch': epoch + 1,
+        #         'model_state_dict': model.state_dict(),
+        #         'optimizer_state_dict': optimizer.state_dict(),
+        #         'scheduler_state_dict': scheduler.state_dict() if hasattr(scheduler, 'state_dict') else None,
+        #         'scheduler_epoch': getattr(scheduler, 'current_epoch', None),
+        #         'scaler_state_dict': scaler.state_dict(),
+        #         'loss': avg_loss,
+        #         'val_loss': val_loss,
+        #         'config': config,
+        #         'phase': phase,
+        #         'train_losses': train_losses,
+        #         'val_losses': val_losses,
+        #         'learning_rates': learning_rates,
+        #         'best_loss': best_loss,
+        #         'early_stopping_state': {
+        #             'best_loss': early_stopping.best_loss,
+        #             'counter': early_stopping.counter,
+        #             'best_weights': early_stopping.best_weights
+        #         },
+        #         'train_indices': train_indices,
+        #         'val_indices': val_indices
+        #     }, checkpoint_path)
         
         # Early stopping check
         if val_loss and early_stopping(val_loss, model):
@@ -620,7 +624,7 @@ def main(): #test annotation nya gaada
         'scheduler': 'cosine-decay',  # Options: 'phase', 'cosine', 'linear', 'step', 'exponential'
         
         # Phase scheduler parameters
-        'warmup_ratio': 0.2,  # 20% warmup for phase scheduler
+        'warmup_ratio': 0.05,  # 10% warmup for phase scheduler
         'decay_ratio': 0.2,   # 20% decay for phase scheduler
         
         # Cosine scheduler parameters (PyTorch built-in)
@@ -645,7 +649,7 @@ def main(): #test annotation nya gaada
         'val_subset_size': 500,
         
         # Checkpointing configuration
-        'enable_checkpointing': True,
+        'enable_checkpointing': False,
         'checkpoint_dir': 'checkpoints_cosineDecay', #Ganti jadi checkpoints_phasesched, checkpoints_customlr_1, 
         'resume_from_checkpoint':None,
         #'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_38.pt', # Set to path of checkpoint to resume from
@@ -736,3 +740,4 @@ if __name__ == "__main__":
 
 
 #Pas warmup pake linearLR, LR nya berubah dari 1e-7 ke 1.05e-7, sehingga pas epoch 40, lr nya bukan 5e-5
+#Next to do: Pake EMA (exponential moving average) untuk model, bisa pake ema.py dari mamba-ssm
