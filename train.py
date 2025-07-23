@@ -169,7 +169,7 @@ def create_scheduler(optimizer, config):
         print(f"sched_2 starting from epoch: {int(config.get('warmup_ratio', 0.1)*config.get('num_epochs'))}")
         sched_2 = CosineAnnealingWarmRestartsWithDecay(
             optimizer,
-            T_0=config.get('T_0', 10),
+            T_0=config.get('T_0', 20),
             T_mult=config.get('T_mult', 1),
             eta_min=config.get('eta_min', 1e-6),
             decay=config.get('decay', 0.9),
@@ -622,7 +622,7 @@ def main(): #test annotation nya gaada
         
         # Scheduler configuration
         'scheduler': 'cosine-decay',  # Options: 'phase', 'cosine', 'linear', 'step', 'exponential'
-        
+        'T_0': 20,
         # Phase scheduler parameters
         'warmup_ratio': 0.05,  # 10% warmup for phase scheduler
         'decay_ratio': 0.2,   # 20% decay for phase scheduler
@@ -649,7 +649,7 @@ def main(): #test annotation nya gaada
         'val_subset_size': 500,
         
         # Checkpointing configuration
-        'enable_checkpointing': False,
+        'enable_checkpointing': True,
         'checkpoint_dir': 'checkpoints_cosineDecay', #Ganti jadi checkpoints_phasesched, checkpoints_customlr_1, 
         'resume_from_checkpoint':None,
         #'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_38.pt', # Set to path of checkpoint to resume from
@@ -741,3 +741,50 @@ if __name__ == "__main__":
 
 #Pas warmup pake linearLR, LR nya berubah dari 1e-7 ke 1.05e-7, sehingga pas epoch 40, lr nya bukan 5e-5
 #Next to do: Pake EMA (exponential moving average) untuk model, bisa pake ema.py dari mamba-ssm
+#And using DDIMSampler 
+
+
+# config = {
+#         'init_lr': 1e-7,
+#         'learning_rate': 5e-5,
+#         'weight_decay': 0.01,
+#         'num_epochs': 200,  # Increased for better training schedule
+#         #'warmup_epochs': 0.15,  # Warmup phase for scheduler
+#         'optimizer': 'adamw',  # Options: 'adamw', 'lion'
+#         'batch_size': 8,
+#         'image_size': 256,
+#         'num_workers': 2,
+#         'patience': 20,  # Early stopping patience
+#         'min_delta': 1e-4,  # Minimum improvement for early stopping
+        
+#         # Scheduler configuration
+#         'scheduler': 'cosine-decay',  # Options: 'phase', 'cosine', 'linear', 'step', 'exponential'
+#         'T_0': 20,
+#         # Phase scheduler parameters
+#         'warmup_ratio': 0.05,  # 10% warmup for phase scheduler
+#         'decay_ratio': 0.2,   # 20% decay for phase scheduler
+        
+#         # Cosine scheduler parameters (PyTorch built-in)
+#         'eta_min': 1e-6,      # Minimum learning rate for cosine annealing
+        
+#         # Linear scheduler parameters
+#         'warmup_epochs': 0.2,  # Number of warmup epochs for linear
+#         'end_lr_factor': 0.1,  # Final LR = base_lr * end_lr_factor
+        
+#         # Step scheduler parameters
+#         'step_size': 50,       # Step size for step scheduler
+#         'gamma': 0.5,          # Learning rate decay factor
+        
+#         'train_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_train2017.json',
+#         'train_image_dir': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/train2017',
+#         'val_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json',
+#         'val_image_dir': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/val2017',
+#         # Subset sizes (set to None for full dataset)
+#         'train_subset_size': 10000,
+#         'val_subset_size': 500,
+        
+#         # Checkpointing configuration
+#         'enable_checkpointing': True,
+#         'checkpoint_dir': 'checkpoints_cosineDecay', #Ganti jadi checkpoints_phasesched, checkpoints_customlr_1, 
+#         'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_38.pt', # Set to path of checkpoint to resume from
+#     }
