@@ -120,9 +120,8 @@ def create_scheduler(optimizer, config):
         # Use PyTorch's built-in cosine annealing
         sched_1 = torch.optim.lr_scheduler.LinearLR(
             optimizer,
-            start_factor=optimizer.param_groups[0]['lr'] / config['learning_rate'],
+            start_factor=config['init_lr'] / config['learning_rate'],
             end_factor=1.0,
-            #total_iters=config.get('warmup_epochs', 10)
             total_iters=int(config.get('warmup_epochs', 10)*config.get('num_epochs'))
         )
         sched_2 = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -172,6 +171,7 @@ def create_scheduler(optimizer, config):
             decay=config.get('decay', 0.9),
             freq_mult=config.get('freq_mult', 1.0)
         )
+        #print(f"milestones: {int(config.get('warmup_epochs', 10)*config.get('num_epochs'))}")
         return torch.optim.lr_scheduler.SequentialLR(
             optimizer,
             schedulers=[sched_1, sched_2],
@@ -573,7 +573,7 @@ def create_datasets_with_indices(config, train_indices=None, val_indices=None):
             # Use full dataset
             train_dataset = full_train_dataset
     else:
-        train_dataset = DummyDataset(num_samples=800, image_size=config['image_size'])
+        train_dataset = DummyDataset(num_samples=40, image_size=config['image_size'])
         train_indices = None
     
     # Create validation dataset
@@ -608,7 +608,7 @@ def main(): #test annotation nya gaada
         'learning_rate': 5e-5,
         'weight_decay': 0.01,
         'num_epochs': 200,  # Increased for better training schedule
-        'warmup_epochs': 0.15,  # Warmup phase for scheduler
+        #'warmup_epochs': 0.15,  # Warmup phase for scheduler
         'optimizer': 'adamw',  # Options: 'adamw', 'lion'
         'batch_size': 8,
         'image_size': 256,
@@ -627,28 +627,28 @@ def main(): #test annotation nya gaada
         'eta_min': 1e-6,      # Minimum learning rate for cosine annealing
         
         # Linear scheduler parameters
-        'warmup_epochs': 50,  # Number of warmup epochs for linear
+        'warmup_epochs': 0.2,  # Number of warmup epochs for linear
         'end_lr_factor': 0.1,  # Final LR = base_lr * end_lr_factor
         
         # Step scheduler parameters
         'step_size': 50,       # Step size for step scheduler
         'gamma': 0.5,          # Learning rate decay factor
         
-        'train_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_train2017.json',
-        #'train_annotations': 'random',
+        #'train_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_train2017.json',
+        'train_annotations': 'random',
         'train_image_dir': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/train2017',
-        'val_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json',
-        #'val_annotations': 'val',
+        #'val_annotations': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json',
+        'val_annotations': 'val',
         'val_image_dir': '/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/val2017',
         # Subset sizes (set to None for full dataset)
         'train_subset_size': 10000,
         'val_subset_size': 500,
         
         # Checkpointing configuration
-        'enable_checkpointing': True,
+        'enable_checkpointing': False,
         'checkpoint_dir': 'checkpoints_cosineDecay', #Ganti jadi checkpoints_phasesched, checkpoints_customlr_1, 
-        'resume_from_checkpoint':None,
-        #'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_68.pt', # Set to path of checkpoint to resume from
+        #'resume_from_checkpoint':None,
+        'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_38.pt', # Set to path of checkpoint to resume from
     }
     
     # Device
@@ -732,3 +732,7 @@ def main(): #test annotation nya gaada
 
 if __name__ == "__main__":
     main() 
+
+
+
+#Pas warmup pake linearLR, LR nya berubah dari 1e-7 ke 1.05e-7, sehingga pas epoch 40, lr nya bukan 5e-5

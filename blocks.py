@@ -25,6 +25,7 @@ class SelectiveSSM(nn.Module):
         self.d_state = d_state
         self.d_conv = d_conv
         self.d_inner = int(expand * d_model)
+        #self.norm = nn.RMSNorm(dim)
         
         # Try to use official Mamba if available
         if MAMBA_AVAILABLE:

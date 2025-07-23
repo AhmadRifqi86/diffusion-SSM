@@ -57,8 +57,8 @@ class CosineAnnealingWarmRestartsWithDecay(torch.optim.lr_scheduler._LRScheduler
         self.eta_min = eta_min
         self.decay = decay          # Decay factor for max LR
         self.freq_mult = freq_mult  # Multiplier for cycle length (e.g., 0.9 for shorter cycles)
-        self.base_lrs = [group['lr'] for group in optimizer.param_groups]
-        self.current_max_lrs = self.base_lrs.copy()
+        self.base_lrs = [5e-5]#None  # lazy init
+        self.current_max_lrs = [5e-5]#None
         self.T_i = T_0
         self.cycle = 0
         self.epoch_since_restart = 0
@@ -74,19 +74,29 @@ class CosineAnnealingWarmRestartsWithDecay(torch.optim.lr_scheduler._LRScheduler
     def step(self, epoch=None):
         if epoch is None:
             epoch = self.last_epoch + 1
+
         self.last_epoch = epoch
         self.epoch_since_restart += 1
 
+        if self.base_lrs is None or self.current_max_lrs is None:
+            self.base_lrs = [group['lr'] for group in self.optimizer.param_groups]
+            print("cosineAnnealingDecay base lrs:", self.base_lrs)
+            self.current_max_lrs = self.base_lrs.copy()
+            print("cosineAnnealingDecay current max lrs:", self.current_max_lrs)
+
         if self.epoch_since_restart >= self.T_i:
-            # End of cycle: decay max LR and decrease cycle length
             self.cycle += 1
             self.epoch_since_restart = 0
             self.current_max_lrs = [lr * self.decay for lr in self.current_max_lrs]
-            self.T_i = max(1, int(self.T_i * self.freq_mult))  # Prevent T_i from going below 1
+            self.T_i = max(1.0, self.T_i * self.freq_mult)
 
-        # Update the learning rates
-        for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
+        # Apply the new learning rates to param groups
+        lrs = self.get_lr()
+        for param_group, lr in zip(self.optimizer.param_groups, lrs):
             param_group['lr'] = lr
+
+        # ✅ Required for PyTorch's SequentialLR compatibility
+        self._last_lr = lrs
 
 
 class EarlyStopping:
