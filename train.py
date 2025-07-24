@@ -631,7 +631,7 @@ def main(): #test annotation nya gaada
         'eta_min': 1e-6,      # Minimum learning rate for cosine annealing
         
         # Linear scheduler parameters
-        'warmup_epochs': 0.2,  # Number of warmup epochs for linear
+        #'warmup_epochs': 0.2,  # Number of warmup epochs for linear
         'end_lr_factor': 0.1,  # Final LR = base_lr * end_lr_factor
         
         # Step scheduler parameters
@@ -653,7 +653,7 @@ def main(): #test annotation nya gaada
         #'enable_checkpointing': False,
         'checkpoint_dir': 'checkpoints_cosineDecay', #Ganti jadi checkpoints_phasesched, checkpoints_customlr_1, 
         #'resume_from_checkpoint':None,
-        'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_24.pt', # Set to path of checkpoint to resume from
+        'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_78.pt', # Set to path of checkpoint to resume from
     }
     
     # Device
@@ -740,9 +740,10 @@ if __name__ == "__main__":
 
 
 
-#Pas warmup pake linearLR, LR nya berubah dari 1e-7 ke 1.05e-7, sehingga pas epoch 40, lr nya bukan 5e-5
+#Pas warmup pake linearLR, LR nya berubah dari 1e-7 ke 1.05e-7, sehingga pas epoch 40, lr nya bukan 5e-5, experiment using smaller decay and other 
+# learning rate scheduler
 #Next to do: Pake EMA (exponential moving average) untuk model, bisa pake ema.py dari mamba-ssm
-#And using DDIMSampler 
+#And using DDIMSampler, Considering using RMSProp
 
 
 # config = {
