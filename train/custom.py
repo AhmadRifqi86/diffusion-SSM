@@ -1,10 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-# --- Lion Optimizer Implementation ---
 from torch.optim.optimizer import Optimizer
-from typing import Optional, Callable, Tuple
+from typing import Optional, Callable
 import numpy as np
 
 class MinSNRVLoss(nn.Module):
@@ -79,11 +77,6 @@ class Lion(Optimizer):
                 # Momentum update
                 exp_avg.lerp_(grad, 1 - beta2)
         return loss
-
-#Consider using SequentialLR to chain multiple schedulers
-#base_lr nya
-#cosineAnnealingDecay base lrs: [9.999999999999998e-08]
-#cosineAnnealingDecay current max lrs: [8.999999999999999e-08]
 
 class CosineAnnealingWarmRestartsWithDecay(torch.optim.lr_scheduler._LRScheduler):
     def __init__(self, optimizer, T_0, T_mult=1, eta_min=0, decay=0.9, freq_mult=0.9, last_epoch=-1, warmup_epoch=None):

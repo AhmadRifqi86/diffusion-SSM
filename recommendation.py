@@ -352,7 +352,7 @@ class AdvancedDiffusionTrainer:
                                  (latents.shape[0],), device=latents.device)
         
         # Add noise
-        noise = torch.randn_like(latents)
+        noise = torch.randn_like(latents) #udah di forward nya model
         noisy_latents, _ = self.noise_scheduler.add_noise(latents, timesteps)
         
         # Get targets

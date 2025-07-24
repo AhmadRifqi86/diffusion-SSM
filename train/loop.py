@@ -1,13 +1,14 @@
 import torch
 import torch.optim as optim
+from torch.amp import GradScaler, autocast
 from custom import CosineAnnealingWarmRestartsWithDecay,EarlyStopping
-from custom import GradientClipperWithNormTracking,EMAModel,MinSNRVLoss
-
+from custom import EMAModel,MinSNRVLoss,GradientClipperWithNormTracking
+from models.diffusers import UShapeMambaDiffusion
 class AdvancedDiffusionTrainer:
     """
     Complete advanced training setup incorporating all improvements
     """
-    def __init__(self, model, base_lr=1e-4, use_v_parameterization=True):
+    def __init__(self, model:UShapeMambaDiffusion, base_lr=1e-4, use_v_parameterization=True):
         self.model = model
         self.use_v_param = use_v_parameterization
         
@@ -24,15 +25,12 @@ class AdvancedDiffusionTrainer:
         self.optimizer = self._create_advanced_optimizer(base_lr)
         self.early_stop = EarlyStopping(patience=20, min_delta=1e-4, restore_best_weights=True)
         
-        # Advanced scheduler
-        # self.scheduler = WarmupCosineWithRestartsScheduler(
-        #     self.optimizer, warmup_steps=2000, total_steps=200000
-        # )
-        self.scheduler = CosineAnnealingWarmRestartsWithDecay(0.1, T_0=1000, T_mult=2, eta_min=1e-6, decay_factor=0.9)
+        # Advanced scheduler, consider using sequentialLR
+        self.scheduler = CosineAnnealingWarmRestartsWithDecay(self.optimizer, T_0=1000, T_mult=2, eta_min=1e-6, decay_factor=0.9)
         
         # Gradient management
         self.grad_clipper = GradientClipperWithNormTracking(max_norm=1.0)
-        
+        self.scaler = GradScaler(enabled=torch.cuda.is_available())
         # Loss tracking
         self.loss_history = []
         
@@ -89,49 +87,48 @@ class AdvancedDiffusionTrainer:
         return torch.optim.AdamW(param_groups, betas=(0.9, 0.999), eps=1e-8)
     
     def training_step(self, batch):
-        """Single training step with all improvements"""
+        """
+        Single training step with autocast, EMA, Min-SNR, grad clipping
+        """
         images, text_prompts = batch
+        timesteps = torch.randint(
+            0, self.model.noise_scheduler.num_train_timesteps,
+            (images.shape[0],), device=images.device
+        )
         
-        # Encode to latent space
-        latents = self.model.encode_images(images)
+        with autocast():  # Enable mixed precision
+            # Forward pass
+            predicted_noise, noise, latents = self.model(images, timesteps, text_prompts)
+            
+            # Choose target
+            if self.use_v_param:
+                target = self.model.noise_scheduler.get_v_target(latents, noise, timesteps)
+            else:
+                target = noise
+
+            # SNR for Min-SNR loss weighting
+            snr = self.model.noise_scheduler.snr[timesteps].to(images.device)
+            loss = self.criterion(predicted_noise, target, timesteps, snr)
         
-        # Sample timesteps
-        timesteps = torch.randint(0, self.noise_scheduler.num_train_timesteps, 
-                                 (latents.shape[0],), device=latents.device)
-        
-        # Add noise
-        noise = torch.randn_like(latents)
-        noisy_latents, _ = self.noise_scheduler.add_noise(latents, timesteps)
-        
-        # Get targets
-        if self.use_v_param:
-            target = self.noise_scheduler.get_v_target(latents, noise, timesteps)
-        else:
-            target = noise
-        
-        # Forward pass
-        context = self.model.encode_text(text_prompts) if text_prompts else None
-        prediction = self.model.unet(noisy_latents, timesteps, context)
-        
-        # Calculate loss with Min-SNR weighting
-        snr = self.noise_scheduler.snr[timesteps].to(latents.device)
-        loss = self.criterion(prediction, target, timesteps, snr)
-        
-        # Backward pass with gradient clipping
+        # Backward pass with gradient scaling
         self.optimizer.zero_grad()
-        loss.backward()
+        self.scaler.scale(loss).backward()
+
+        # Clip gradients before stepping
         grad_norm = self.grad_clipper.clip_gradients(self.model)
-        self.optimizer.step()
-        
-        # Update EMA
+
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+
+        # EMA update
         self.ema_model.update()
-        
-        # Update scheduler
+
+        # LR scheduler step
         self.scheduler.step()
-        
-        # Track metrics
+
+        # Logging
         self.loss_history.append(loss.item())
-        
+
         return {
             'loss': loss.item(),
             'grad_norm': grad_norm.item(),
