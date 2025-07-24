@@ -217,7 +217,7 @@ class ScaleShift(nn.Module):
             cond = torch.cat([context, timestep_emb], dim=-1)
             scale_shift = self.to_scale_shift_time(cond)
         else:
-            scale_shift = self.to_scale_shift(context)
+            scale_shift = self.to_scale_shift(context) 
         scale, shift = scale_shift.chunk(2, dim=-1)
         # Reshape for broadcasting over sequence or spatial dimensions
         while scale.dim() < x.dim():

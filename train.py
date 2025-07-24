@@ -534,8 +534,8 @@ def train_model(model, train_loader, val_loader, device, config, train_indices=N
         # Early stopping check
         if val_loss and early_stopping(val_loss, model):
             logger.info(f"Early stopping triggered after {epoch + 1} epochs")
-            if early_stopping.restore_best_model(model):
-                logger.info("Restored best model weights")
+            # if early_stopping.restore_best_model(model):
+            #     logger.info("Restored best model weights")
             continue
     
     # Final logging

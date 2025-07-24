@@ -183,7 +183,7 @@ class MiddleBlock(nn.Module):
         
         # Add time embedding
         time_emb = self.time_mlp(t)
-        if not self.time_in_mainblock:
+        if not self.time_in_mainblock: #time embedding is added with input
             h = h + time_emb[:, :, None, None]
         
         h = self.conv2(h)
@@ -197,9 +197,9 @@ class MiddleBlock(nn.Module):
             h_flat = self.to_main_block(h_flat)
 
             if self.time_in_mainblock:
-                h_flat = self.main_block(h_flat, context, time_emb)
+                h_flat = self.main_block(h_flat, context, time_emb) #time embedding is 
             else:
-                h_flat = self.main_block(h_flat, context)
+                h_flat = self.main_block(h_flat, context) #if time embedding added with input
 
             h_flat = self.from_main_block(h_flat)
             h = h_flat.transpose(1, 2).reshape(B, C, H, W)
