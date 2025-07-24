@@ -230,6 +230,49 @@ class ScaleShift(nn.Module):
 
         return x * (scale + 1) + shift
 
+class MainBlockSerial(nn.Module):  #Maybe put dropout here
+    """
+    Main block implementing the architecture from the second image, now supports optional timestep embedding.
+    Uses official Mamba if available, otherwise falls back to MambaBlock.
+    """
+    def __init__(self, dim, context_dim, heads=8, dim_head=64, d_state=16, d_conv=4, expand=2):
+        super().__init__()
+        self.dim = dim
+        self.cross_attn = CrossAttention(dim, context_dim, heads, dim_head)
+        self.scale_shift_1 = ScaleShift(dim, context_dim)
+        self.norm_1 = nn.RMSNorm(dim)
+        if MAMBA_AVAILABLE:
+            self.mamba_block = Mamba(
+                d_model=dim,
+                d_state=d_state,
+                d_conv=d_conv,
+                expand=expand,
+            )
+        else:
+            self.mamba_block = MambaBlock(dim, d_state, d_conv, expand)
+        self.scale_shift_2 = ScaleShift(dim, context_dim)
+        self.norm_2 = nn.RMSNorm(dim)
+        self.scale_1 = nn.Parameter(torch.ones(1))
+        self.scale_2 = nn.Parameter(torch.ones(1))
+        self.dropout = nn.Dropout(p = 0.05)
+        self.dropout_2 = nn.Dropout(p = 0.1)  # Optional dropout after Mamba block
+        
+    @print_forward_shapes
+    def forward(self, x, context, timestep_emb=None):
+        residual_1 = x
+        x_mamba = self.dropout(self.mamba_block(x))
+        x_mamba = self.scale_shift_1(x_mamba, context.mean(dim=1), timestep_emb)
+        x_mamba = self.norm_1(x_mamba)
+        attn_inp = x_mamba * self.scale_1 + residual_1
+
+        x_attn = self.cross_attn(attn_inp, context)
+        x_attn = self.scale_shift_2(x_attn, context.mean(dim=1), timestep_emb) #RMSNorm after dropout?
+        x_attn = self.norm_2(self.dropout_2(x_attn))
+        output = x_attn * self.scale_2 + attn_inp
+        return output
+
+
+
 class MainBlockParallel(nn.Module):
     """
     Main block implementing the architecture from the second image, now supports optional timestep embedding.
@@ -266,46 +309,5 @@ class MainBlockParallel(nn.Module):
         x_mamba = self.norm_2(x_mamba)
         x_mamba = x_mamba * self.scale_2
         output = residual + x_attn + x_mamba
-        return output
-
-class MainBlockSerial(nn.Module):  #Maybe put dropout here
-    """
-    Main block implementing the architecture from the second image, now supports optional timestep embedding.
-    Uses official Mamba if available, otherwise falls back to MambaBlock.
-    """
-    def __init__(self, dim, context_dim, heads=8, dim_head=64, d_state=16, d_conv=4, expand=2):
-        super().__init__()
-        self.dim = dim
-        self.cross_attn = CrossAttention(dim, context_dim, heads, dim_head)
-        self.scale_shift_1 = ScaleShift(dim, context_dim)
-        self.norm_1 = nn.RMSNorm(dim)
-        if MAMBA_AVAILABLE:
-            self.mamba_block = Mamba(
-                d_model=dim,
-                d_state=d_state,
-                d_conv=d_conv,
-                expand=expand,
-            )
-        else:
-            self.mamba_block = MambaBlock(dim, d_state, d_conv, expand)
-        self.scale_shift_2 = ScaleShift(dim, context_dim)
-        self.norm_2 = nn.RMSNorm(dim)
-        self.scale_1 = nn.Parameter(torch.ones(1))
-        self.scale_2 = nn.Parameter(torch.ones(1))
-        self.dropout = nn.Dropout(p = 0.05)
-        self.dropout_2 = nn.Dropout(p = 0.1)  # Optional dropout after Mamba block
-        
-    @print_forward_shapes
-    def forward(self, x, context, timestep_emb=None):
-        residual_1 = x
-        x_mamba = self.dropout(self.mamba_block(x))
-        x_mamba = self.scale_shift_1(x_mamba, context.mean(dim=1), timestep_emb)
-        x_mamba = self.norm_1(x_mamba)
-        attn_inp = x_mamba * self.scale_1 + residual_1
-        #attn_inp = x_mamba + residual_1
-        x_attn = self.cross_attn(attn_inp, context)
-        x_attn = self.scale_shift_2(x_attn, context.mean(dim=1), timestep_emb) #RMSNorm after dropout?
-        x_attn = self.dropout_2(self.norm_2(x_attn))
-        output = x_attn * self.scale_2 + attn_inp
         return output
 

@@ -157,9 +157,7 @@ class UShapeMambaDiffusion(nn.Module):
             in_channels=vae_latent_channels,
             model_channels=model_channels,
             context_dim=context_dim,
-            dropout=dropout,
-            use_shared_time_embedding=use_shared_time_embedding
-        )
+            dropout=dropout)
         
         # Noise scheduler
         self.noise_scheduler = NoiseScheduler(num_train_timesteps)
@@ -219,7 +217,8 @@ class UShapeMambaDiffusion(nn.Module):
         latents = self.encode_images(images)
         
         # Add noise according to timesteps
-        noisy_latents, noise = self.noise_scheduler.add_noise(latents, timesteps)
+        noise = torch.randn_like(latents)
+        noisy_latents = self.noise_scheduler.add_noise(latents, timesteps)
         
         # Encode text prompts if provided
         context = None
