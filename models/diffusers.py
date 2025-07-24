@@ -128,37 +128,6 @@ class NoiseScheduler:
         
         epsilon = sqrt_alpha * v + sqrt_one_minus_alpha * x_t
         return epsilon
-
-#------------------------------Improved Loss Function-----------------------#
-
-class MinSNRVLoss(nn.Module):
-    """
-    🔥 Min-SNR Loss Weighting for V-parameterization
-    Optimized for velocity prediction instead of noise prediction
-    """
-    def __init__(self, gamma=5.0):
-        super().__init__()
-        self.gamma = gamma
-    
-    def forward(self, v_pred, v_target, timesteps, snr):
-        """
-        Apply Min-SNR weighting to v-parameterization loss
-        
-        Args:
-            v_pred: Predicted velocity from model
-            v_target: Target velocity from scheduler
-            timesteps: Current timesteps
-            snr: Signal-to-noise ratio from scheduler
-        """
-        # Basic MSE loss between predicted and target velocity
-        loss = F.mse_loss(v_pred, v_target, reduction='none')
-        loss = loss.mean(dim=[1, 2, 3])  # Average over spatial dimensions
-        
-        # Min-SNR weighting - prevents over-optimization on high-noise timesteps
-        snr_weights = torch.minimum(snr, torch.full_like(snr, self.gamma)) / snr
-        weighted_loss = loss * snr_weights
-        
-        return weighted_loss.mean()
     
 #------------------------------Diffusion Model-----------------------#
 class UShapeMambaDiffusion(nn.Module):

@@ -301,12 +301,11 @@ class MainBlockSerial(nn.Module):  #Maybe put dropout here
         x_mamba = self.dropout(self.mamba_block(x))
         x_mamba = self.scale_shift_1(x_mamba, context.mean(dim=1), timestep_emb)
         x_mamba = self.norm_1(x_mamba)
-        x_mamba = x_mamba * self.scale_1
-        attn_inp = x_mamba + residual_1
+        attn_inp = x_mamba * self.scale_1 + residual_1
+        #attn_inp = x_mamba + residual_1
         x_attn = self.cross_attn(attn_inp, context)
         x_attn = self.scale_shift_2(x_attn, context.mean(dim=1), timestep_emb) #RMSNorm after dropout?
         x_attn = self.dropout_2(self.norm_2(x_attn))
-        x_attn = x_attn * self.scale_2
-        output = x_attn + attn_inp
+        output = x_attn * self.scale_2 + attn_inp
         return output
 
