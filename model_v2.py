@@ -180,7 +180,7 @@ class UShapeMambaDiffusion(nn.Module):
         # Initialize random noise
         latents = torch.randn(latent_shape, device=device)
         
-        # Proper DDPM sampling
+        # Proper DDPM sampling, maybe change this to DDIM 
         timesteps = torch.linspace(self.noise_scheduler.num_train_timesteps - 1, 0, num_inference_steps).long()
 
         for t in timesteps:

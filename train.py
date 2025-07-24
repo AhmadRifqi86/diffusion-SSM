@@ -536,7 +536,7 @@ def train_model(model, train_loader, val_loader, device, config, train_indices=N
             logger.info(f"Early stopping triggered after {epoch + 1} epochs")
             if early_stopping.restore_best_model(model):
                 logger.info("Restored best model weights")
-            break
+            continue
     
     # Final logging
     logger.info(f"Training completed. Best validation loss: {best_loss:.4f}")
@@ -653,7 +653,7 @@ def main(): #test annotation nya gaada
         #'enable_checkpointing': False,
         'checkpoint_dir': 'checkpoints_cosineDecay', #Ganti jadi checkpoints_phasesched, checkpoints_customlr_1, 
         #'resume_from_checkpoint':None,
-        'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_78.pt', # Set to path of checkpoint to resume from
+        'resume_from_checkpoint': 'checkpoints_cosineDecay/checkpoint_epoch_94.pt', # Set to path of checkpoint to resume from
     }
     
     # Device

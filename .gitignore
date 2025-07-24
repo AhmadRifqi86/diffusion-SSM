@@ -176,6 +176,8 @@ tmp.py
 ssm_triton.py
 TODO.md
 Explain.md
+*.png
+*.jpg
 checkpoints_phasesched/
 checkpoints_cosineAnneal/
 checkpoints_cosineDecay/
