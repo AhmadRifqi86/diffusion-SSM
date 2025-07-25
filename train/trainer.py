@@ -17,7 +17,7 @@ class AdvancedDiffusionTrainer:
     def __init__(self, model: UShapeMambaDiffusion, base_lr=1e-4, use_v_parameterization=True, checkpoint_dir="checkpoints"):
         self.model = model
         self.use_v_param = use_v_parameterization
-
+        # tambah self.config
         # Min-SNR loss
         self.criterion = MinSNRVLoss(gamma=5.0)
 
@@ -25,17 +25,19 @@ class AdvancedDiffusionTrainer:
         self.ema_model = EMAModel(model, decay=0.9999)
 
         # Multi-component optimizer
-        #self.optimizer = self._create_advanced_optimizer(base_lr)
-        self.optimizer = torch.optim.AdamW(
-            model.parameters(), 
-            lr=1e-6,
-            weight_decay=0.01
-        )
+        self.optimizer = self._create_advanced_optimizer(base_lr)
+        # self.optimizer = torch.optim.AdamW(
+        #     model.parameters(), 
+        #     lr=1e-6,
+        #     weight_decay=0.01
+        # )
         self.early_stop = EarlyStopping(patience=20, min_delta=1e-4, restore_best_weights=True)
 
         # Advanced scheduler, consider using sequentialLR
-        self.scheduler = CosineAnnealingWarmRestartsWithDecay(
-            self.optimizer, T_0=1000, T_mult=2, eta_min=1e-6, decay=0.9)
+        # self.scheduler = CosineAnnealingWarmRestartsWithDecay(
+        #     self.optimizer, T_0=100, freq_mult=1.5, eta_min=1e-6, decay=0.9)
+
+        self.scheduler = self._create_advanced_scheduler()
 
         # Gradient management
         self.grad_clipper = GradientClipperWithNormTracking(max_norm=1.0)
@@ -97,6 +99,30 @@ class AdvancedDiffusionTrainer:
             param_groups.append({'params': remaining, 'lr': base_lr, 'weight_decay': 0.01})
 
         return torch.optim.AdamW(param_groups, betas=(0.9, 0.999), eps=1e-8)
+    
+    def _create_advanced_scheduler(self):
+        sched_1 = torch.optim.lr_scheduler.LinearLR(
+            self.optimizer,
+            start_factor= 5e-7/5e-5, #init_lr/base_lr#config['init_lr'] / config['learning_rate'],
+            end_factor=1.0,
+            total_iters=int(0.05 * 1000 )
+        )
+        #print(f"sched_2 starting from epoch: {int(config.get('warmup_ratio', 0.1)*config.get('num_epochs'))}")
+        sched_2 = CosineAnnealingWarmRestartsWithDecay(
+            self.optimizer,
+            T_0=100, #config.get('T_0', 20),
+            T_mult= 0.9,#config.get('T_mult', 1),
+            eta_min= 1e-6,#config.get('eta_min', 1e-6),
+            decay=0.9, #config.get('decay', 0.9),
+            freq_mult=0.9 #config.get('freq_mult', 1.0)
+        )
+        #print(f"milestones: {int(config.get('warmup_epochs', 10)*config.get('num_epochs'))}")
+        return torch.optim.lr_scheduler.SequentialLR(
+            self.optimizer,
+            schedulers=[sched_1, sched_2],
+            milestones=[int(0.05*1000)]
+            #milestones=[1+int(config.get('warmup_ratio', 0.1)*config.get('num_epochs'))]
+        )
 
     def checkpoint(self, save_path, epoch, val_loss):
         """
@@ -235,9 +261,9 @@ class AdvancedDiffusionTrainer:
             for batch in progress_bar:
                 stats = self.training_step(batch)
                 epoch_losses.append(stats['loss'])
-                #print(f"Learning Rate: {stats['lr']:.6f}") #karena learning rate nya sekarang per-step, bukan per-epoch
+                #print(f"Learning Rate: {stats['lr']:.2e}") #karena learning rate nya sekarang per-step, bukan per-epoch
             avg_train_loss = sum(epoch_losses) / len(epoch_losses)
-            print(f"📉 Avg Train Loss: {avg_train_loss:.4f}")
+            print(f"📉 Avg Train Loss: {avg_train_loss:.2e}")
             # printing final learning rate for the epoch
             #print(f"Avg Train Loss: {avg_train_loss:.4f}")
 

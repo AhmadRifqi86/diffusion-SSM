@@ -17,7 +17,7 @@ def main():
         'weight_decay': 0.01,
         'num_epochs': 200,
         'optimizer': 'adamw',
-        'batch_size': 4,
+        'batch_size': 8,
         'image_size': 256,
         'num_workers': 2,
         'patience': 20,
@@ -39,7 +39,7 @@ def main():
         'train_subset_size': 10000,
         'val_subset_size': 500,
         'enable_checkpointing': False,
-        'checkpoint_dir': 'checkpoints_cosineDecay',
+        'checkpoint_dir': None, #'checkpoints_cosineDecay',
         'resume_from_checkpoint': None,
     }
 

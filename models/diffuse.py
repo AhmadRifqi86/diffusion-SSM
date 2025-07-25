@@ -49,10 +49,12 @@ class NoiseScheduler:
         #print(f"Original samples shape: {original_samples.device}")
         
         # Ensure timesteps are on the same device as sqrt_alphas_cumprod
-        timesteps = timesteps.to(self.sqrt_alphas_cumprod.device)
-        sqrt_alpha_prod = self.sqrt_alphas_cumprod[timesteps].to(original_samples.device)
-        sqrt_one_minus_alpha_prod = self.sqrt_one_minus_alphas_cumprod[timesteps].to(original_samples.device)
+        # timesteps = timesteps.to(self.sqrt_alphas_cumprod.device)
+        # sqrt_alpha_prod = self.sqrt_alphas_cumprod[timesteps].to(original_samples.device)
+        # sqrt_one_minus_alpha_prod = self.sqrt_one_minus_alphas_cumprod[timesteps].to(original_samples.device)
         
+        sqrt_alpha_prod = self.sqrt_alphas_cumprod[timesteps]
+        sqrt_one_minus_alpha_prod = self.sqrt_one_minus_alphas_cumprod[timesteps]
         # Reshape for broadcasting
         while len(sqrt_alpha_prod.shape) < len(original_samples.shape):
             sqrt_alpha_prod = sqrt_alpha_prod.unsqueeze(-1)
@@ -109,13 +111,13 @@ class NoiseScheduler:
         """
         🔥 V-parameterization: Predict velocity instead of noise
         """
-        timesteps = timesteps.to(self.sqrt_alphas_cumprod.device)
+        #timesteps = timesteps.to(self.sqrt_alphas_cumprod.device)
         sqrt_alpha = self.sqrt_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
         sqrt_one_minus_alpha = self.sqrt_one_minus_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
         # Move to the same device as noise/x_0
         device = noise.device
-        sqrt_alpha = sqrt_alpha.to(device)
-        sqrt_one_minus_alpha = sqrt_one_minus_alpha.to(device)
+        #sqrt_alpha = sqrt_alpha.to(device)
+        #sqrt_one_minus_alpha = sqrt_one_minus_alpha.to(device)
         v = sqrt_alpha * noise - sqrt_one_minus_alpha * x_0
         return v
     
@@ -134,6 +136,14 @@ class NoiseScheduler:
         
         epsilon = sqrt_alpha * v + sqrt_one_minus_alpha * x_t
         return epsilon
+    
+    def to(self, device):
+        """Move all scheduler tensors to device"""
+        self.alphas_cumprod = self.alphas_cumprod.to(device)
+        self.sqrt_alphas_cumprod = self.sqrt_alphas_cumprod.to(device) 
+        self.sqrt_one_minus_alphas_cumprod = self.sqrt_one_minus_alphas_cumprod.to(device)
+        self.snr = self.snr.to(device)
+        return self
     
 #------------------------------Diffusion Model-----------------------#
 class UShapeMambaDiffusion(nn.Module):
@@ -165,7 +175,7 @@ class UShapeMambaDiffusion(nn.Module):
             context_dim=context_dim)
         
         # Noise scheduler
-        self.noise_scheduler = NoiseScheduler(num_train_timesteps)
+        self.noise_scheduler = NoiseScheduler(num_train_timesteps).to(self.device)
         
         # Freeze pre-trained components
         for param in self.vae.parameters():

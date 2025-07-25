@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from torch.optim.optimizer import Optimizer
 from typing import Optional, Callable
 import numpy as np
+import math
+
 
 class MinSNRVLoss(nn.Module):
     """
@@ -100,7 +102,7 @@ class CosineAnnealingWarmRestartsWithDecay(torch.optim.lr_scheduler._LRScheduler
             #print("Initialized base_lrs:", self.base_lrs)
         # Standard cosine annealing formula, but with decaying max LR
         return [
-            self.eta_min + (max_lr - self.eta_min) * (1 + torch.cos(torch.tensor(self.epoch_since_restart * 3.1415926535 / self.T_i))) / 2
+            self.eta_min + (max_lr - self.eta_min) * (1 + torch.cos(torch.tensor(self.epoch_since_restart * math.pi/ self.T_i))) / 2
             for max_lr in self.current_max_lrs
         ]
 
@@ -113,11 +115,13 @@ class CosineAnnealingWarmRestartsWithDecay(torch.optim.lr_scheduler._LRScheduler
         if self.epoch_since_restart >= self.T_i:
             self.cycle += 1
             self.epoch_since_restart = 0
-            self.T_i = max(1.0, self.T_i * self.freq_mult)
+            self.T_i = int(self.T_i * self.freq_mult) #max(1.0, self.T_i * self.freq_mult) #dipaksa turun berarti cycle nya
             self.current_max_lrs = [
                 base_lr * (self.decay ** self.cycle)
                 for base_lr in self.base_lrs
             ]
+            # print("self.T_i:", self.T_i)
+            # print("self.current_max_lrs:", self.current_max_lrs)
 
         # Apply the new learning rates to param groups
         lrs = self.get_lr()
