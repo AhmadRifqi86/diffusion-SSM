@@ -75,7 +75,6 @@ class AdvancedDiffusionTrainer:
             'scale_shift':     (2.0, 0.005),
             'vae_proj':        (0.2, 0.0),
             'context_proj':    (0.2, 0.0),
-            'timestep_embedding': (0.2, 0.0),
         }
 
         # --- Group known patterns (by name or type)

@@ -41,7 +41,7 @@ class NoiseScheduler:
         self.betas[0] = self.betas[1]  # Prevent NaN
         self.alphas = 1.0 - self.betas
     
-    def add_noise(self, original_samples, noise, timesteps):
+    def add_noise(self, original_samples, noise, timesteps): #is this using DDIM or DDPM?
         """
         Add noise to samples for training (forward process)
         """
@@ -151,9 +151,7 @@ class UShapeMambaDiffusion(nn.Module):
                  vae_model_name="stabilityai/sd-vae-ft-mse",
                  clip_model_name="openai/clip-vit-base-patch32",
                  model_channels=160,
-                 num_train_timesteps=1000,
-                 dropout=0.0,
-                 use_shared_time_embedding=False):  # Removed use_openai_clip parameter
+                 num_train_timesteps=1000):  # Removed use_openai_clip parameter
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # Load pre-trained VAE
@@ -164,7 +162,7 @@ class UShapeMambaDiffusion(nn.Module):
         self.clip_text_encoder = CLIPTextModel.from_pretrained(clip_model_name)
         self.clip_tokenizer = CLIPTokenizer.from_pretrained(clip_model_name)
         context_dim = self.clip_text_encoder.config.hidden_size
-        print("CLIP context dim", context_dim)
+        #print("CLIP context dim", context_dim)
         # Get VAE latent channels
         vae_latent_channels = self.vae.config.latent_channels
         
