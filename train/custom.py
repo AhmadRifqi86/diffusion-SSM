@@ -97,7 +97,7 @@ class CosineAnnealingWarmRestartsWithDecay(torch.optim.lr_scheduler._LRScheduler
             self.base_lrs = [group['initial_lr'] if 'initial_lr' in group else group['lr']
                              for group in self.optimizer.param_groups]
             self.current_max_lrs = self.base_lrs.copy()
-            print("Initialized base_lrs:", self.base_lrs)
+            #print("Initialized base_lrs:", self.base_lrs)
         # Standard cosine annealing formula, but with decaying max LR
         return [
             self.eta_min + (max_lr - self.eta_min) * (1 + torch.cos(torch.tensor(self.epoch_since_restart * 3.1415926535 / self.T_i))) / 2

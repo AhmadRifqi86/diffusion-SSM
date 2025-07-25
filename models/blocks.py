@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from debug import print_forward_shapes
+from models.debug import print_forward_shapes
 
 # Import official Mamba implementation if available
 try:

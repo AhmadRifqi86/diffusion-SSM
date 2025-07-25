@@ -2,8 +2,8 @@ import torch
 import math
 import torch.nn as nn
 import torch.nn.functional as F
-from unet import UShapeMamba
-from debug import print_forward_shapes
+from models.unet import UShapeMamba
+from models.debug import print_forward_shapes
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import AutoencoderKL
 
@@ -139,9 +139,9 @@ class UShapeMambaDiffusion(nn.Module):
                  dropout=0.0,
                  use_shared_time_embedding=False):  # Removed use_openai_clip parameter
         super().__init__()
-        
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # Load pre-trained VAE
-        self.vae = AutoencoderKL.from_pretrained(vae_model_name)
+        self.vae = AutoencoderKL.from_pretrained(vae_model_name, torch_dtype=torch.float16).to(self.device)
         
         # Load Hugging Face CLIP encoder (only option now)
         print(f"Loading Hugging Face CLIP: {clip_model_name}")
@@ -156,8 +156,7 @@ class UShapeMambaDiffusion(nn.Module):
         self.unet = UShapeMamba(
             in_channels=vae_latent_channels,
             model_channels=model_channels,
-            context_dim=context_dim,
-            dropout=dropout)
+            context_dim=context_dim)
         
         # Noise scheduler
         self.noise_scheduler = NoiseScheduler(num_train_timesteps)
@@ -172,22 +171,22 @@ class UShapeMambaDiffusion(nn.Module):
     def encode_images(self, images):
         """Encode images to latent space using pre-trained VAE"""
         with torch.no_grad():
-            # VAE encoder returns a distribution, we sample from it
+            dtype = next(self.vae.parameters()).dtype  # detect VAE's dtype (e.g., float16)
+            images = images.to(dtype=dtype)            # cast images to match VAE
             posterior = self.vae.encode(images).latent_dist
             latents = posterior.sample()
-            # Scale latents according to VAE config
             latents = latents * self.vae.config.scaling_factor
         return latents
-    
+
     def decode_latents(self, latents):
         """Decode latents to images using pre-trained VAE"""
         with torch.no_grad():
-            # Unscale latents
+            dtype = next(self.vae.parameters()).dtype
+            latents = latents.to(dtype=dtype)
             latents = latents / self.vae.config.scaling_factor
-            # Decode
             images = self.vae.decode(latents).sample
         return images
-    
+        
     def encode_text(self, text_prompts, max_length=None, padding=True):
         """Encode text prompts using Hugging Face CLIP"""
         with torch.no_grad():

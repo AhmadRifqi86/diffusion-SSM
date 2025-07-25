@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 from utils import print_forward_shapes
 from blocks import MainBlockSerial, MainBlockParallel
-
+from models.debug import print_forward_shapes
 
 class TimestepEmbedding(nn.Module):
     def __init__(self, dim):

@@ -1,9 +1,9 @@
 import torch
 import torch.optim as optim
 from torch.amp import GradScaler, autocast
-from custom import CosineAnnealingWarmRestartsWithDecay,EarlyStopping
-from custom import EMAModel,MinSNRVLoss,GradientClipperWithNormTracking
-from models.diffusers import UShapeMambaDiffusion
+from train.custom import CosineAnnealingWarmRestartsWithDecay, EarlyStopping
+from train.custom import EMAModel, MinSNRVLoss, GradientClipperWithNormTracking
+from models.diffuse import UShapeMambaDiffusion
 from models.blocks import CrossAttention
 import logging
 import tqdm
@@ -30,7 +30,7 @@ class AdvancedDiffusionTrainer:
 
         # Advanced scheduler, consider using sequentialLR
         self.scheduler = CosineAnnealingWarmRestartsWithDecay(
-            self.optimizer, T_0=1000, T_mult=2, eta_min=1e-6, decay_factor=0.9)
+            self.optimizer, T_0=1000, T_mult=2, eta_min=1e-6, decay=0.9)
 
         # Gradient management
         self.grad_clipper = GradientClipperWithNormTracking(max_norm=1.0)
@@ -120,8 +120,10 @@ class AdvancedDiffusionTrainer:
             0, self.model.noise_scheduler.num_train_timesteps,
             (images.shape[0],), device=images.device
         )
+        images = images.to(next(self.model.parameters()).device)
+        timesteps = timesteps.to(next(self.model.parameters()).device)
 
-        with autocast():
+        with autocast(device_type="cuda"):
             predicted_noise, noise, latents = self.model(images, timesteps, text_prompts)
             target = self.model.noise_scheduler.get_v_target(latents, noise, timesteps) if self.use_v_param else noise
             snr = self.model.noise_scheduler.snr[timesteps].to(images.device)
@@ -157,8 +159,9 @@ class AdvancedDiffusionTrainer:
                     0, self.model.noise_scheduler.num_train_timesteps,
                     (images.shape[0],), device=images.device
                 )
-
-                with autocast():
+                images = images.to(next(self.model.parameters()).device)
+                timesteps = timesteps.to(next(self.model.parameters()).device)
+                with autocast(device_type="cuda"):
                     predicted_noise, noise, latents = self.model(images, timesteps, text_prompts)
                     target = self.model.noise_scheduler.get_v_target(latents, noise, timesteps) if self.use_v_param else noise
                     snr = self.model.noise_scheduler.snr[timesteps].to(images.device)
