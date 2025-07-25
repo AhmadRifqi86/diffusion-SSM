@@ -5,7 +5,7 @@ from functools import wraps
 def print_forward_shapes(forward_fn):
     def wrapper(self, *args, **kwargs):
         
-        DEBUG = False  # Set this to True to enable shape printing
+        DEBUG = False # Set this to True to enable shape printing
         if not DEBUG:
             return forward_fn(self, *args, **kwargs)
         print(f"\n[{self.__class__.__name__}.forward] called")

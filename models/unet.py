@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 from utils import print_forward_shapes
-from blocks import MainBlockSerial, MainBlockParallel
+from models.blocks import MainBlockSerial, MainBlockParallel
 from models.debug import print_forward_shapes
 
 class TimestepEmbedding(nn.Module):
@@ -11,7 +11,7 @@ class TimestepEmbedding(nn.Module):
         super().__init__()
         self.dim = dim
         
-    @print_forward_shapes  
+    #@print_forward_shapes  
     def forward(self, timesteps):
         half_dim = self.dim // 2
         embeddings = math.log(10000) / (half_dim - 1)
@@ -49,13 +49,13 @@ class DownBlock(nn.Module):
         # self.norm2 = nn.GroupNorm(8, out_channels)
         
         self.to_main_block = nn.Linear(out_channels, out_channels)
-        self.main_block = MainBlockSerial(out_channels, context_dim)
+        self.main_block = MainBlockSerial(out_channels, context_dim, time_dim)
         self.from_main_block = nn.Linear(out_channels, out_channels)
         self.downsample = nn.Conv2d(out_channels, out_channels, 4, stride=2, padding=1)
         self.norm1 = AdaptiveGroupNorm(8, out_channels, time_dim)
         self.norm2 = AdaptiveGroupNorm(8, out_channels, time_dim)
         
-    @print_forward_shapes
+    #@print_forward_shapes
     def forward(self, x, t, context=None):
         # Get processed time embedding once
         
@@ -68,9 +68,12 @@ class DownBlock(nn.Module):
         h = F.silu(h)
         
         if context is not None:
+            #print("DownBlock Context shape: ", context.shape)
+            #print("DownBlock Time shape: ", t.shape) 
             B, C, H, W = h.shape
             h_flat = h.flatten(2).transpose(1, 2)
             h_flat = self.to_main_block(h_flat)
+            #print("h_flat shape: ", h_flat.shape)
             h_flat = self.main_block(h_flat, context, t)  # Use PROCESSED time_emb
             h_flat = self.from_main_block(h_flat)
             h = h_flat.transpose(1, 2).reshape(B, C, H, W)
@@ -96,7 +99,7 @@ class UpBlock(nn.Module):
         self.main_block = MainBlockSerial(out_channels, context_dim)
         self.from_main_block = nn.Linear(out_channels, out_channels)
         
-    @print_forward_shapes
+    #@print_forward_shapes
     def forward(self, x, skip, t, context=None):
         # Process time embedding - consistent with DownBlock and MiddleBlock
         #time_emb = self.time_mlp(t)
@@ -113,9 +116,12 @@ class UpBlock(nn.Module):
         
         # Apply Main Block - consistent with DownBlock and MiddleBlock
         if context is not None:
+            #print("UpBlock Context shape: ", context.shape)
+            #print("UpBlock Time shape: ", t.shape) 
             B, C, H, W = x.shape
             x_flat = x.flatten(2).transpose(1, 2)
             x_flat = self.to_main_block(x_flat)
+            #print("x_flat shape: ", x_flat.shape)
             x_flat = self.main_block(x_flat, context, t)
             x_flat = self.from_main_block(x_flat)
             x = x_flat.transpose(1, 2).reshape(B, C, H, W)
@@ -138,7 +144,7 @@ class MiddleBlock(nn.Module):
         self.from_main_block = nn.Linear(channels, channels)
         
         
-    @print_forward_shapes  
+    #@print_forward_shapes  
     def forward(self, x, t, context=None):
         h = self.conv1(x)
         h = self.norm1(h,t)
@@ -150,9 +156,12 @@ class MiddleBlock(nn.Module):
         
         # Apply Main Block
         if context is not None:
+            #print("MiddleBlock Context shape: ", context.shape)
+            #print("MiddleBlock Time shape: ", t.shape)  
             B, C, H, W = h.shape
             h_flat = h.flatten(2).transpose(1, 2)
             h_flat = self.to_main_block(h_flat)
+            #print("h_flat shape: ", h_flat.shape)
             h_flat = self.main_block(h_flat, context, t) #time embedding is 
             h_flat = self.from_main_block(h_flat)
             h = h_flat.transpose(1, 2).reshape(B, C, H, W)
@@ -203,7 +212,7 @@ class UShapeMamba(nn.Module):
 
         self.output_proj = nn.Conv2d(model_channels, in_channels, 3, padding=1)
         
-    @print_forward_shapes
+    #@print_forward_shapes
     def forward(self, x, timesteps, context=None):
         t = self.time_embed(timesteps)  # Shared approach: Use global time embedding
         

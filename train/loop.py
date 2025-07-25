@@ -6,7 +6,7 @@ from train.custom import EMAModel, MinSNRVLoss, GradientClipperWithNormTracking
 from models.diffuse import UShapeMambaDiffusion
 from models.blocks import CrossAttention
 import logging
-import tqdm
+from tqdm import tqdm
 import os
 
 
@@ -25,7 +25,12 @@ class AdvancedDiffusionTrainer:
         self.ema_model = EMAModel(model, decay=0.9999)
 
         # Multi-component optimizer
-        self.optimizer = self._create_advanced_optimizer(base_lr)
+        #self.optimizer = self._create_advanced_optimizer(base_lr)
+        self.optimizer = torch.optim.AdamW(
+            model.parameters(), 
+            lr=1e-6,
+            weight_decay=0.01
+        )
         self.early_stop = EarlyStopping(patience=20, min_delta=1e-4, restore_best_weights=True)
 
         # Advanced scheduler, consider using sequentialLR
@@ -126,7 +131,8 @@ class AdvancedDiffusionTrainer:
         with autocast(device_type="cuda"):
             predicted_noise, noise, latents = self.model(images, timesteps, text_prompts)
             target = self.model.noise_scheduler.get_v_target(latents, noise, timesteps) if self.use_v_param else noise
-            snr = self.model.noise_scheduler.snr[timesteps].to(images.device)
+            # Ensure timesteps are on the same device as snr
+            snr = self.model.noise_scheduler.snr[timesteps.to(self.model.noise_scheduler.snr.device)].to(images.device)
             loss = self.criterion(predicted_noise, target, timesteps, snr)
 
         self.optimizer.zero_grad()
@@ -164,7 +170,8 @@ class AdvancedDiffusionTrainer:
                 with autocast(device_type="cuda"):
                     predicted_noise, noise, latents = self.model(images, timesteps, text_prompts)
                     target = self.model.noise_scheduler.get_v_target(latents, noise, timesteps) if self.use_v_param else noise
-                    snr = self.model.noise_scheduler.snr[timesteps].to(images.device)
+                    # Ensure timesteps are on the same device as snr
+                    snr = self.model.noise_scheduler.snr[timesteps.to(self.model.noise_scheduler.snr.device)].to(images.device)
                     loss = self.criterion(predicted_noise, target, timesteps, snr)
 
                 total_val_loss += loss.item()
@@ -179,45 +186,48 @@ class AdvancedDiffusionTrainer:
         self.model.train()
         return avg_val_loss
     
-    def train(self, dataloader, val_dataloader, num_epochs, checkpoint_dir="checkpoints"):
+    def train(self, data_loader, val_dataloader, num_epochs, checkpoint_dir="checkpoints"):
         best_val_loss = float('inf')
-
+        print("len(data_loader):", len(data_loader))
         for epoch in range(1, num_epochs + 1):
             print(f"📘 Epoch {epoch}/{num_epochs}")
             self.model.train()
             epoch_losses = []
 
-            for batch in dataloader:
+            progress_bar = tqdm(data_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
+            for batch in progress_bar:
                 stats = self.training_step(batch)
                 epoch_losses.append(stats['loss'])
 
             avg_train_loss = sum(epoch_losses) / len(epoch_losses)
             print(f"📉 Avg Train Loss: {avg_train_loss:.4f}")
+            #print(f"Avg Train Loss: {avg_train_loss:.4f}")
 
             # Validation
             self.model.eval()
             val_losses = []
+            if val_dataloader is not None:
+                with torch.no_grad():
+                    for val_batch in val_dataloader:
+                        val_loss = self.validate(val_batch)
+                        val_losses.append(val_loss.item())
 
-            with torch.no_grad():
-                for val_batch in val_dataloader:
-                    val_loss = self.validate(val_batch)
-                    val_losses.append(val_loss.item())
-
-            avg_val_loss = sum(val_losses) / len(val_losses)
-            print(f"🔎 Validation Loss: {avg_val_loss:.4f}")
+                avg_val_loss = sum(val_losses) / len(val_losses)
+                print(f"🔎 Validation Loss: {avg_val_loss:.4f}")
+            
 
             # Save per-epoch checkpoint
-            epoch_cp_path = os.path.join(checkpoint_dir, f"cp_epoch{epoch}.pt")
-            self.checkpoint(epoch_cp_path, epoch, avg_val_loss)
+            # epoch_cp_path = os.path.join(checkpoint_dir, f"cp_epoch{epoch}.pt")
+            # self.checkpoint(epoch_cp_path, epoch, avg_val_loss)
 
-            # Save best checkpoint if improved
-            if avg_val_loss < best_val_loss:
-                best_val_loss = avg_val_loss
-                best_cp_path = os.path.join(checkpoint_dir, "best_model.pt")
-                self.checkpoint(best_cp_path, epoch, avg_val_loss)# Early stopping
+            # # Save best checkpoint if improved
+            # if avg_val_loss < best_val_loss:
+            #     best_val_loss = avg_val_loss
+            #     best_cp_path = os.path.join(checkpoint_dir, "best_model.pt")
+            #     self.checkpoint(best_cp_path, epoch, avg_val_loss)# Early stopping
 
-            if self.early_stop(avg_val_loss):
-                print("⏹️ Early stopping triggered.")
-                break
+            # if self.early_stop(avg_val_loss):
+            #     print("⏹️ Early stopping triggered.")
+            #     continue
             
 

@@ -46,8 +46,10 @@ class NoiseScheduler:
         Add noise to samples for training (forward process)
         """
         # Ensure timesteps are on the same device
-        timesteps = timesteps.to(original_samples.device)
+        #print(f"Original samples shape: {original_samples.device}")
         
+        # Ensure timesteps are on the same device as sqrt_alphas_cumprod
+        timesteps = timesteps.to(self.sqrt_alphas_cumprod.device)
         sqrt_alpha_prod = self.sqrt_alphas_cumprod[timesteps].to(original_samples.device)
         sqrt_one_minus_alpha_prod = self.sqrt_one_minus_alphas_cumprod[timesteps].to(original_samples.device)
         
@@ -107,9 +109,13 @@ class NoiseScheduler:
         """
         🔥 V-parameterization: Predict velocity instead of noise
         """
+        timesteps = timesteps.to(self.sqrt_alphas_cumprod.device)
         sqrt_alpha = self.sqrt_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
         sqrt_one_minus_alpha = self.sqrt_one_minus_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
-        
+        # Move to the same device as noise/x_0
+        device = noise.device
+        sqrt_alpha = sqrt_alpha.to(device)
+        sqrt_one_minus_alpha = sqrt_one_minus_alpha.to(device)
         v = sqrt_alpha * noise - sqrt_one_minus_alpha * x_0
         return v
     
@@ -148,7 +154,7 @@ class UShapeMambaDiffusion(nn.Module):
         self.clip_text_encoder = CLIPTextModel.from_pretrained(clip_model_name)
         self.clip_tokenizer = CLIPTokenizer.from_pretrained(clip_model_name)
         context_dim = self.clip_text_encoder.config.hidden_size
-        
+        print("CLIP context dim", context_dim)
         # Get VAE latent channels
         vae_latent_channels = self.vae.config.latent_channels
         
@@ -207,22 +213,23 @@ class UShapeMambaDiffusion(nn.Module):
 
         return text_features
     
-    @print_forward_shapes
+    #@print_forward_shapes
     def forward(self, images, timesteps, text_prompts=None):
         """
         Forward pass for training - predicts noise
         """
         # Encode images to latent space
         latents = self.encode_images(images)
-        
+        #print(f"Latents shape: {latents.shape}")
         # Add noise according to timesteps
         noise = torch.randn_like(latents)
-        noisy_latents = self.noise_scheduler.add_noise(latents, timesteps)
+        noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
         
         # Encode text prompts if provided
         context = None
         if text_prompts is not None:
             context = self.encode_text(text_prompts)
+            #print(f"Context shape: {context.shape}")
         
         # Predict noise (not denoised latents)
         predicted_noise = self.unet(noisy_latents, timesteps, context)
@@ -238,7 +245,7 @@ class UShapeMambaDiffusion(nn.Module):
         
         # Encode text (conditional)
         text_embeddings = self.encode_text(text_prompts)
-        #print(f"Text embeddings shape: {text_embeddings.shape}")
+        print(f"Text embeddings shape: {text_embeddings.shape}")
 
         # Encode unconditional context (empty strings)
         uncond_embeddings = self.encode_text(
