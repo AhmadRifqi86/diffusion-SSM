@@ -499,38 +499,6 @@ def train_model(model, train_loader, val_loader, device, config, train_indices=N
             
             logger.info(f"Checkpoint saved: {checkpoint_path}")
         
-        # Regular checkpoint every 10 epochs (if not already saved)
-        # elif (epoch + 1) % 10 == 0:
-        #     checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch+1}.pt')
-            
-        #     # Delete previous epoch-specific checkpoint if it exists
-        #     if os.path.exists(checkpoint_path):
-        #         os.remove(checkpoint_path)
-                
-        #     torch.save({
-        #         'epoch': epoch + 1,
-        #         'model_state_dict': model.state_dict(),
-        #         'optimizer_state_dict': optimizer.state_dict(),
-        #         'scheduler_state_dict': scheduler.state_dict() if hasattr(scheduler, 'state_dict') else None,
-        #         'scheduler_epoch': getattr(scheduler, 'current_epoch', None),
-        #         'scaler_state_dict': scaler.state_dict(),
-        #         'loss': avg_loss,
-        #         'val_loss': val_loss,
-        #         'config': config,
-        #         'phase': phase,
-        #         'train_losses': train_losses,
-        #         'val_losses': val_losses,
-        #         'learning_rates': learning_rates,
-        #         'best_loss': best_loss,
-        #         'early_stopping_state': {
-        #             'best_loss': early_stopping.best_loss,
-        #             'counter': early_stopping.counter,
-        #             'best_weights': early_stopping.best_weights
-        #         },
-        #         'train_indices': train_indices,
-        #         'val_indices': val_indices
-        #     }, checkpoint_path)
-        
         # Early stopping check
         if val_loss and early_stopping(val_loss, model):
             logger.info(f"Early stopping triggered after {epoch + 1} epochs")

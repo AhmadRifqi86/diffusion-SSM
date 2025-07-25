@@ -20,125 +20,103 @@ class TimestepEmbedding(nn.Module):
         embeddings = torch.cat([embeddings.sin(), embeddings.cos()], dim=-1)
         return embeddings
 
-class DownBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, time_dim, context_dim, dropout,time_in_mainblock=False, use_shared_time_embedding=True):
+class AdaptiveGroupNorm(nn.Module): #Replace GroupNorm with AdaptiveGroupNorm
+    """
+    Adaptive Group Normalization that adapts to timestep
+    Better than standard GroupNorm for diffusion models
+    """
+    def __init__(self, num_groups, num_channels, time_emb_dim):
         super().__init__()
-        self.use_shared_time_embedding = use_shared_time_embedding
+        self.norm = nn.GroupNorm(num_groups, num_channels, affine=False)
+        self.time_emb_proj = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(time_emb_dim, num_channels * 2)
+        )
         
-        if use_shared_time_embedding:    # Shared approach: Project from shared time embedding to block channels
-            self.time_mlp = nn.Sequential(
-                nn.SiLU(),
-                nn.Linear(time_dim, out_channels)  # Project shared embedding to block channels
-            )
-        else:  # Separate approach: Create independent time embedding for this block
-            self.time_mlp = nn.Sequential(
-                TimestepEmbedding(time_dim),  # Create timestep embedding
-                nn.Linear(time_dim, time_dim),
-                nn.SiLU(),
-                nn.Linear(time_dim, out_channels)  # Project to block channels
-            )
-        
+    def forward(self, x, time_emb):
+        x = self.norm(x)
+        scale_shift = self.time_emb_proj(time_emb)[:, :, None, None]
+        scale, shift = scale_shift.chunk(2, dim=1)
+        return x * (scale + 1) + shift
+
+class DownBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, time_dim, context_dim):
+        super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
         self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
-        self.norm1 = nn.GroupNorm(8, out_channels)
-        self.norm2 = nn.GroupNorm(8, out_channels)
+        # self.norm1 = nn.GroupNorm(8, out_channels)
+        # self.norm2 = nn.GroupNorm(8, out_channels)
+        self.norm1 = AdaptiveGroupNorm(8, out_channels, time_dim)  #
+        self.norm2 = AdaptiveGroupNorm(8, out_channels, time_dim)  #
         self.to_main_block = nn.Linear(out_channels, out_channels)
         self.main_block = MainBlockSerial(out_channels, context_dim)
         self.from_main_block = nn.Linear(out_channels, out_channels)
         self.downsample = nn.Conv2d(out_channels, out_channels, 4, stride=2, padding=1)
-        self.time_in_mainblock = time_in_mainblock
-        self.dropout=nn.Dropout(p=dropout)
+        
         
     @print_forward_shapes
-    def forward(self, x, t, context=None):
-        h = self.conv1(x)
-        h = self.norm1(h)
-        h = self.dropout(F.silu(h))
+    def forward(self, x, skip, t, context=None):
+
+        x = self.upsample(x)
+        x = torch.cat([x, skip], dim=1)
+        x = self.conv1(x)
+        x = self.norm1(x,t)
+        x = F.silu(x)
         
-        time_emb = self.time_mlp(t)
-        if not self.time_in_mainblock:
-            h = h + time_emb[:, :, None, None]
-
-        h = self.conv2(h)
-        h = self.norm2(h)
-        h = self.dropout(F.silu(h))
-
+        x = self.conv2(x)
+        x = self.norm2(x,t)
+        x = F.silu(x)
+        
+        # Apply Main Block - consistent with DownBlock and MiddleBlock
         if context is not None:
-            B, C, H, W = h.shape
-            h_flat = h.flatten(2).transpose(1, 2)
-            h_flat = self.to_main_block(h_flat)
-
-            if self.time_in_mainblock:
-                h_flat = self.main_block(h_flat, context, time_emb)
-            else:
-                h_flat = self.main_block(h_flat, context)
-
-            h_flat = self.from_main_block(h_flat)
-            h = h_flat.transpose(1, 2).reshape(B, C, H, W)
-
-        return self.downsample(h), h
+            #print("UpBlock Context shape: ", context.shape)
+            #print("UpBlock Time shape: ", t.shape) 
+            B, C, H, W = x.shape
+            x_flat = x.flatten(2).transpose(1, 2)
+            x_flat = self.to_main_block(x_flat)
+            #print("x_flat shape: ", x_flat.shape)
+            x_flat = self.main_block(x_flat, context, t)
+            x_flat = self.from_main_block(x_flat)
+            x = x_flat.transpose(1, 2).reshape(B, C, H, W)
+        
+        return x
 
 class UpBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, skip_channels, time_embed_dim, context_dim,dropout, time_in_mainblock=False, use_shared_time_embedding=True):
+    def __init__(self, in_channels, out_channels, skip_channels, time_embed_dim, context_dim):
         super().__init__()
-        self.use_shared_time_embedding = use_shared_time_embedding
+        
         
         self.upsample = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1)
         self.conv1 = nn.Conv2d(out_channels + skip_channels, out_channels, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
-
-        if use_shared_time_embedding:  # Shared approach: Project from shared time embedding to block channels
-            self.time_mlp = nn.Sequential(
-                nn.SiLU(),
-                nn.Linear(time_embed_dim, out_channels)  # Project shared embedding to block channels
-            )
-        else:  # Separate approach: Create independent time embedding for this block
-            self.time_mlp = nn.Sequential(
-                TimestepEmbedding(time_embed_dim),  # Create timestep embedding
-                nn.Linear(time_embed_dim, time_embed_dim),
-                nn.SiLU(),
-                nn.Linear(time_embed_dim, out_channels)  # Project to block channels
-            )
-
-        self.norm1 = nn.GroupNorm(8, out_channels)
-        self.norm2 = nn.GroupNorm(8, out_channels)
-        
+        self.norm1 = AdaptiveGroupNorm(8, out_channels, time_embed_dim)  # Use AdaptiveGroupNorm
+        self.norm2 = AdaptiveGroupNorm(8, out_channels, time_embed_dim)
         # Main block processing - consistent with DownBlock and MiddleBlock
         self.to_main_block = nn.Linear(out_channels, out_channels)
         self.main_block = MainBlockSerial(out_channels, context_dim)
         self.from_main_block = nn.Linear(out_channels, out_channels)
-        self.time_in_mainblock = time_in_mainblock
-        self.dropout=nn.Dropout(p=dropout)
         
     @print_forward_shapes
     def forward(self, x, skip, t, context=None):
+
         x = self.upsample(x)
         x = torch.cat([x, skip], dim=1)
         x = self.conv1(x)
-        x = self.norm1(x)
-        x = self.dropout(F.silu(x))
-        
-        # Process time embedding - consistent with DownBlock and MiddleBlock
-        time_emb = self.time_mlp(t)
-
-        if not self.time_in_mainblock:
-            x = x + time_emb[:, :, None, None]
-        
+        x = self.norm1(x,t)
+        x = F.silu(x)
         x = self.conv2(x)
-        x = self.norm2(x)
-        x = self.dropout(F.silu(x))
+        x = self.norm2(x,t)
+        x = F.silu(x)
         
         # Apply Main Block - consistent with DownBlock and MiddleBlock
         if context is not None:
+            #print("UpBlock Context shape: ", context.shape)
+            #print("UpBlock Time shape: ", t.shape) 
             B, C, H, W = x.shape
             x_flat = x.flatten(2).transpose(1, 2)
             x_flat = self.to_main_block(x_flat)
-
-            if self.time_in_mainblock:
-                x_flat = self.main_block(x_flat, context, time_emb)
-            else:
-                x_flat = self.main_block(x_flat, context)
-
+            #print("x_flat shape: ", x_flat.shape)
+            x_flat = self.main_block(x_flat, context, t)
             x_flat = self.from_main_block(x_flat)
             x = x_flat.transpose(1, 2).reshape(B, C, H, W)
         
@@ -146,61 +124,39 @@ class UpBlock(nn.Module):
 
 
 class MiddleBlock(nn.Module):
-    def __init__(self, channels, time_dim, context_dim,dropout, time_in_mainblock=False, use_shared_time_embedding=True):
+    def __init__(self, channels, time_dim, context_dim,dropout):
         super().__init__()
-        self.use_shared_time_embedding = use_shared_time_embedding
-        
-        if use_shared_time_embedding: # Shared approach: Project from shared time embedding to block channels
-            self.time_mlp = nn.Sequential(
-                nn.SiLU(),
-                nn.Linear(time_dim, channels)  # Project shared embedding to block channels
-            )
-        else: # Separate approach: Create independent time embedding for this block
-            self.time_mlp = nn.Sequential(
-                TimestepEmbedding(time_dim),  # Create timestep embedding
-                nn.Linear(time_dim, time_dim),
-                nn.SiLU(),
-                nn.Linear(time_dim, channels)  # Project to block channels
-            )
         
         self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
         self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.norm1 = nn.GroupNorm(8, channels)
-        self.norm2 = nn.GroupNorm(8, channels)
-        
+        # self.norm1 = AdaptiveGroupNorm(8, channels)
+        # self.norm2 = nn.GroupNorm(8, channels)
+        self.norm1 = AdaptiveGroupNorm(8, channels, time_dim)  # Use AdaptiveGroupNorm
+        self.norm2 = AdaptiveGroupNorm(8, channels, time_dim)
         # Main block processing
         self.to_main_block = nn.Linear(channels, channels)
         self.main_block = MainBlockSerial(channels, context_dim)
         self.from_main_block = nn.Linear(channels, channels)
-        self.time_in_mainblock = time_in_mainblock
-        self.dropout=nn.Dropout(p=dropout)
         
     @print_forward_shapes  
     def forward(self, x, t, context=None):
         h = self.conv1(x)
-        h = self.norm1(h)
-        h = self.dropout(F.silu(h))
-        
-        # Add time embedding
-        time_emb = self.time_mlp(t)
-        if not self.time_in_mainblock:
-            h = h + time_emb[:, :, None, None]
-        
+        h = self.norm1(h,t)
+        h = F.silu(h)
+
         h = self.conv2(h)
-        h = self.norm2(h)
-        h = self.dropout(F.silu(h))
+        h = self.norm2(h,t)
+        h = F.silu(h)
         
         # Apply Main Block
         if context is not None:
+            #print("MiddleBlock Context shape: ", context.shape)
+            #print("MiddleBlock Time shape: ", t.shape)  
             B, C, H, W = h.shape
             h_flat = h.flatten(2).transpose(1, 2)
             h_flat = self.to_main_block(h_flat)
-
-            if self.time_in_mainblock:
-                h_flat = self.main_block(h_flat, context, time_emb)
-            else:
-                h_flat = self.main_block(h_flat, context)
-
+            #print("h_flat shape: ", h_flat.shape)
+            h_flat = self.main_block(h_flat, context, t) #time embedding is 
             h_flat = self.from_main_block(h_flat)
             h = h_flat.transpose(1, 2).reshape(B, C, H, W)
         
@@ -213,25 +169,16 @@ class UShapeMamba(nn.Module):
                  model_channels=160,
                  time_embed_dim=160,
                  context_dim=768,
-                 dropout=0.0,
-                 use_shared_time_embedding=True):  # New parameter to control time embedding approach
+                ):  # New parameter to control time embedding approach
         super().__init__()
         
-        # Time embedding configuration
-        self.use_shared_time_embedding = use_shared_time_embedding
-        
-        if use_shared_time_embedding:
-            # Shared time embedding approach (default)
-            self.time_embed = nn.Sequential(
-                TimestepEmbedding(model_channels),
-                nn.Linear(model_channels, time_embed_dim),
-                nn.SiLU(),
-                nn.Linear(time_embed_dim, time_embed_dim),
-            )
-            print("Using SHARED time embedding approach")
-        else:
-            # Separate time embedding approach - no global time embedding
-            print("Using SEPARATE time embedding approach")
+        self.time_embed = nn.Sequential(
+            TimestepEmbedding(model_channels),
+            nn.Linear(model_channels, time_embed_dim),
+            nn.LayerNorm(time_embed_dim),
+            nn.SiLU(),
+            nn.Linear(time_embed_dim, time_embed_dim),
+        )
         
         self.context_proj = nn.Linear(context_dim, context_dim)
         self.input_proj = nn.Conv2d(in_channels, model_channels, 3, padding=1)
@@ -243,14 +190,12 @@ class UShapeMamba(nn.Module):
         for i in range(4):
             out_ch = model_channels * (2 ** i)
             self.down_blocks.append(
-                DownBlock(in_ch, out_ch, time_embed_dim, context_dim,dropout, 
-                         use_shared_time_embedding=use_shared_time_embedding)
+                DownBlock(in_ch, out_ch, time_embed_dim, context_dim)
             )
             down_channels.append(out_ch)
             in_ch = out_ch
 
-        self.middle_block = MiddleBlock(in_ch, time_embed_dim, context_dim,dropout,
-                                       use_shared_time_embedding=use_shared_time_embedding)
+        self.middle_block = MiddleBlock(in_ch, time_embed_dim, context_dim)
 
         # Reverse for up path
         self.up_blocks = nn.ModuleList()
@@ -260,8 +205,7 @@ class UShapeMamba(nn.Module):
         for i, skip_ch in enumerate(skip_channels):
             out_ch = model_channels * (2 ** (2 - i)) if i < 3 else model_channels
             self.up_blocks.append(
-                UpBlock(up_in_channels, out_ch, skip_ch, time_embed_dim, context_dim,dropout, 
-                       time_in_mainblock=False, use_shared_time_embedding=use_shared_time_embedding)
+                UpBlock(up_in_channels, out_ch, skip_ch, time_embed_dim, context_dim)
             )
             up_in_channels = out_ch
 
@@ -269,10 +213,7 @@ class UShapeMamba(nn.Module):
         
     @print_forward_shapes
     def forward(self, x, timesteps, context=None):
-        if self.use_shared_time_embedding:
-            t = self.time_embed(timesteps)  # Shared approach: Use global time embedding
-        else:
-            t = timesteps  # Separate approach: Pass raw timesteps to each block
+        t = self.time_embed(timesteps)  # Shared approach: Use global time embedding
         
         if context is not None:
             context = self.context_proj(context)

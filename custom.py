@@ -102,31 +102,63 @@ class CosineAnnealingWarmRestartsWithDecay(torch.optim.lr_scheduler._LRScheduler
 
         # ✅ Required for PyTorch's SequentialLR compatibility
         self._last_lr = lrs
+
     
-    # def step(self, epoch=None):
-    #     if epoch is None:
-    #         epoch = self.last_epoch + 1
+class GradientClipperWithNormTracking:
+    """
+    Advanced gradient clipping with gradient norm tracking
+    """
+    def __init__(self, max_norm=1.0, norm_type=2.0):
+        self.max_norm = max_norm
+        self.norm_type = norm_type
+        self.grad_norms = []
+        
+    def clip_gradients(self, model):
+        total_norm = torch.nn.utils.clip_grad_norm_(
+            model.parameters(), self.max_norm, self.norm_type
+        )
+        self.grad_norms.append(total_norm.item())
+        return total_norm
+    
+    def get_stats(self):
+        if not self.grad_norms:
+            return {}
+        return {
+            'grad_norm_mean': np.mean(self.grad_norms[-100:]),
+            'grad_norm_std': np.std(self.grad_norms[-100:]),
+            'grad_norm_max': max(self.grad_norms[-100:])
+        }
 
-    #     self.last_epoch = epoch
-
-    #     # Compute learning rate before changing cycle counters
-    #     lrs = self.get_lr()
-    #     for param_group, lr in zip(self.optimizer.param_groups, lrs):
-    #         param_group['lr'] = lr
-
-    #     # ✅ Required for PyTorch's SequentialLR compatibility
-    #     self._last_lr = lrs
-
-    #     # Now update internal counters AFTER applying LR
-    #     self.epoch_since_restart += 1
-    #     if self.epoch_since_restart >= self.T_i:
-    #         self.cycle += 1
-    #         self.epoch_since_restart = 0
-    #         self.T_i = max(1.0, self.T_i * self.freq_mult)
-    #         self.current_max_lrs = [
-    #             base_lr * (self.decay ** self.cycle)
-    #             for base_lr in self.base_lrs
-    #         ]
+class EMAModel:
+    """
+    🔥 Exponential Moving Average - CRITICAL for stable sampling
+    """
+    def __init__(self, model, decay=0.9999):
+        self.decay = decay
+        self.model = model
+        self.shadow = {}
+        self.backup = {}
+        
+        # Initialize shadow parameters
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                self.shadow[name] = param.data.clone()
+    
+    def update(self):
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                self.shadow[name] = self.decay * self.shadow[name] + (1 - self.decay) * param.data
+    
+    def apply_shadow(self):
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                self.backup[name] = param.data.clone()
+                param.data = self.shadow[name]
+    
+    def restore(self):
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                param.data = self.backup[name]
 
 
 class EarlyStopping:

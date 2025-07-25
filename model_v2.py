@@ -12,45 +12,123 @@ from transformers import CLIPTextModel, CLIPTokenizer
 
 
 class NoiseScheduler:
-    """Simple linear noise scheduler for DDPM"""
-    def __init__(self, num_train_timesteps=1000, beta_start=0.0001, beta_end=0.02):
+    """
+    🔁 Unified Diffusion Noise Scheduler (DDPM + DDIM)
+    - Cosine schedule w/ Zero Terminal SNR
+    - Supports v-parameterization
+    - Training: add_noise()
+    - Inference: step_ddpm(), step_ddim()
+    """
+    def __init__(self, num_train_timesteps=1000, beta_start=0.0001, beta_end=0.02,
+                 prediction_type="v_prediction"):
         self.num_train_timesteps = num_train_timesteps
-        self.beta_start = beta_start
-        self.beta_end = beta_end
-        
-        # Linear schedule
-        self.betas = torch.linspace(beta_start, beta_end, num_train_timesteps)
-        self.alphas = 1.0 - self.betas
-        self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
-        self.alphas_cumprod_prev = torch.cat([torch.tensor([1.0]), self.alphas_cumprod[:-1]])
-        
-        # Pre-compute values
+        self.prediction_type = prediction_type
+
+        # Cosine schedule with zero terminal SNR
+        steps = num_train_timesteps + 1
+        x = torch.linspace(0, num_train_timesteps, steps)
+        alphas_cumprod = torch.cos(((x / num_train_timesteps) + 0.008) / 1.008 * math.pi * 0.5) ** 2
+        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+        alphas_cumprod[-1] = 0.0  # zero terminal SNR
+
+        self.alphas_cumprod = alphas_cumprod[:-1]
+        self.alphas_cumprod_prev = torch.cat([torch.tensor([1.0]), alphas_cumprod[:-2]])
         self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod)
-        
-    def add_noise(self, original_samples, timesteps):
-        """Add noise to samples according to timesteps"""
-        device = timesteps.device  # 🔥 fix
-        sqrt_alpha = self.sqrt_alphas_cumprod.to(device)[timesteps].view(-1, 1, 1, 1)
-        sqrt_one_minus_alpha = self.sqrt_one_minus_alphas_cumprod.to(device)[timesteps].view(-1, 1, 1, 1)
+        self.snr = self.alphas_cumprod / (1 - self.alphas_cumprod)
 
-        noise = torch.randn_like(original_samples)
-        noisy_samples = sqrt_alpha * original_samples + sqrt_one_minus_alpha * noise
+        self.betas = 1.0 - self.alphas_cumprod / self.alphas_cumprod_prev
+        self.betas[0] = self.betas[1]
+        self.alphas = 1.0 - self.betas
 
-        return noisy_samples, noise
+    def add_noise(self, x_start, noise, timesteps):
+        sqrt_alpha = self.sqrt_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+        sqrt_one_minus_alpha = self.sqrt_one_minus_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+        return sqrt_alpha * x_start + sqrt_one_minus_alpha * noise
 
-    def step(self, model_output, timesteps, sample):
-        """Single denoising step"""
-        device = timesteps.device  # 🔥 fix
-        alpha = self.alphas_cumprod.to(device)[timesteps].view(-1, 1, 1, 1)
-        alpha_prev = self.alphas_cumprod_prev.to(device)[timesteps].view(-1, 1, 1, 1)
-        beta = self.betas.to(device)[timesteps].view(-1, 1, 1, 1)
+    def step_ddpm(self, model_output, t, x_t, generator=None):
+        """
+        ⬅ DDPM stochastic sampling step
+        """
+        prev_t = t - 1 if t > 0 else 0
+        alpha_t = self.alphas_cumprod[t]
+        alpha_prev = self.alphas_cumprod[prev_t]
+        beta_t = 1 - alpha_t
 
-        pred_original_sample = (sample - torch.sqrt(1 - alpha) * model_output) / torch.sqrt(alpha)
-        pred_sample_direction = torch.sqrt(1 - alpha_prev) * model_output
-        pred_prev_sample = torch.sqrt(alpha_prev) * pred_original_sample + pred_sample_direction
+        if self.prediction_type == "v_prediction":
+            x_0 = self.predict_start_from_v(x_t, model_output, t)
+            eps = self.get_epsilon_from_v(x_t, model_output, t)
+        else:
+            eps = model_output
+            x_0 = (x_t - torch.sqrt(beta_t) * eps) / torch.sqrt(alpha_t)
 
-        return pred_prev_sample
+        coef_x0 = torch.sqrt(alpha_prev)
+        coef_eps = torch.sqrt(1 - alpha_prev)
+        x_prev = coef_x0 * x_0 + coef_eps * eps
+
+        if t > 0:
+            noise = torch.randn_like(x_t, generator=generator)
+            var = torch.sqrt(self._get_variance(t, prev_t)) * noise
+            x_prev = x_prev + var
+
+        return x_prev
+
+    def step_ddim(self, model_output, t, x_t, eta=0.0, generator=None):
+        """
+        ⬅ DDIM deterministic sampling step
+        """
+        prev_t = t - 1 if t > 0 else 0
+        alpha_t = self.alphas_cumprod[t]
+        alpha_prev = self.alphas_cumprod[prev_t]
+        sqrt_alpha_t = torch.sqrt(alpha_t)
+        sqrt_alpha_prev = torch.sqrt(alpha_prev)
+
+        if self.prediction_type == "v_prediction":
+            x_0 = self.predict_start_from_v(x_t, model_output, t)
+            eps = self.get_epsilon_from_v(x_t, model_output, t)
+        else:
+            eps = model_output
+            x_0 = (x_t - torch.sqrt(1 - alpha_t) * eps) / sqrt_alpha_t
+
+        sigma = eta * torch.sqrt((1 - alpha_prev) / (1 - alpha_t) * (1 - alpha_t / alpha_prev))
+        dir_xt = torch.sqrt(1 - alpha_prev - sigma ** 2) * eps
+        noise = sigma * torch.randn_like(x_t, generator=generator) if eta > 0 else 0
+
+        x_prev = sqrt_alpha_prev * x_0 + dir_xt + noise
+        return x_prev
+
+    def _get_variance(self, t, prev_t):
+        alpha_t = self.alphas_cumprod[t]
+        alpha_prev = self.alphas_cumprod[prev_t] if prev_t >= 0 else torch.tensor(1.0)
+        beta_t = 1 - alpha_t
+        beta_prev = 1 - alpha_prev
+        return (beta_prev / beta_t) * (1 - alpha_t / alpha_prev)
+
+    def get_v_target(self, x_0, noise, timesteps):
+        sqrt_alpha = self.sqrt_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+        sqrt_one_minus_alpha = self.sqrt_one_minus_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+        return sqrt_alpha * noise - sqrt_one_minus_alpha * x_0
+
+    def predict_start_from_v(self, x_t, v, timesteps):
+        sqrt_alpha = self.sqrt_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+        sqrt_one_minus_alpha = self.sqrt_one_minus_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+        return sqrt_alpha * x_t - sqrt_one_minus_alpha * v
+
+    def get_epsilon_from_v(self, x_t, v, timesteps):
+        sqrt_alpha = self.sqrt_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+        sqrt_one_minus_alpha = self.sqrt_one_minus_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+        return sqrt_alpha * v + sqrt_one_minus_alpha * x_t
+
+    def to(self, device):
+        self.alphas_cumprod = self.alphas_cumprod.to(device)
+        self.alphas_cumprod_prev = self.alphas_cumprod_prev.to(device)
+        self.sqrt_alphas_cumprod = self.sqrt_alphas_cumprod.to(device)
+        self.sqrt_one_minus_alphas_cumprod = self.sqrt_one_minus_alphas_cumprod.to(device)
+        self.snr = self.snr.to(device)
+        self.betas = self.betas.to(device)
+        self.alphas = self.alphas.to(device)
+        return self
+
 
 
 class UShapeMambaDiffusion(nn.Module):
@@ -58,14 +136,13 @@ class UShapeMambaDiffusion(nn.Module):
                  vae_model_name="stabilityai/sd-vae-ft-mse",
                  clip_model_name="openai/clip-vit-base-patch32",
                  model_channels=160,
-                 num_train_timesteps=1000,
-                 dropout=0.0,
-                 use_shared_time_embedding=False):  # Removed use_openai_clip parameter
+                 num_train_timesteps=1000
+                 ):  # Removed use_openai_clip parameter
         super().__init__()
         
         # Load pre-trained VAE
         self.vae = AutoencoderKL.from_pretrained(vae_model_name)
-        
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # Load Hugging Face CLIP encoder (only option now)
         print(f"Loading Hugging Face CLIP: {clip_model_name}")
         self.clip_text_encoder = CLIPTextModel.from_pretrained(clip_model_name)
@@ -80,12 +157,10 @@ class UShapeMambaDiffusion(nn.Module):
             in_channels=vae_latent_channels,
             model_channels=model_channels,
             context_dim=context_dim,
-            dropout=dropout,
-            use_shared_time_embedding=use_shared_time_embedding
         )
         
         # Noise scheduler
-        self.noise_scheduler = NoiseScheduler(num_train_timesteps)
+        self.noise_scheduler = NoiseScheduler(num_train_timesteps).to(self.device)
         
         # Freeze pre-trained components
         for param in self.vae.parameters():

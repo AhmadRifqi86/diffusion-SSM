@@ -199,8 +199,10 @@ class ScaleShift(nn.Module):
     """
     Scale and Shift module for adaptive conditioning, now supports optional timestep embedding.
     """
-    def __init__(self, dim, context_dim):
+    def __init__(self, dim, context_dim, timestep_emb_dim):
         super().__init__()
+
+        self.timestep_proj = nn.Linear(timestep_emb_dim, context_dim)
         self.to_scale_shift = nn.Sequential(
             nn.SiLU(),
             nn.Linear(context_dim, dim * 2)
@@ -214,7 +216,7 @@ class ScaleShift(nn.Module):
     def forward(self, x, context, timestep_emb=None):
         if timestep_emb is not None:
             # Concatenate context and timestep embedding
-            cond = torch.cat([context, timestep_emb], dim=-1)
+            cond = torch.cat([context, self.timestep_proj(timestep_emb)], dim=-1)
             scale_shift = self.to_scale_shift_time(cond)
         else:
             scale_shift = self.to_scale_shift(context)
@@ -274,7 +276,7 @@ class MainBlockSerial(nn.Module):  #Maybe put dropout here
         self.dim = dim
         self.cross_attn = CrossAttention(dim, context_dim, heads, dim_head)
         self.scale_shift_1 = ScaleShift(dim, context_dim)
-        self.norm_1 = nn.LayerNorm(dim)
+        self.norm_1 = nn.RMSNorm(dim)
         if MAMBA_AVAILABLE:
             self.mamba_block = Mamba(
                 d_model=dim,
@@ -285,22 +287,22 @@ class MainBlockSerial(nn.Module):  #Maybe put dropout here
         else:
             self.mamba_block = MambaBlock(dim, d_state, d_conv, expand)
         self.scale_shift_2 = ScaleShift(dim, context_dim)
-        self.norm_2 = nn.LayerNorm(dim)
+        self.norm_2 = nn.RMSNorm(dim)
         self.scale_1 = nn.Parameter(torch.ones(1))
         self.scale_2 = nn.Parameter(torch.ones(1))
+        self.dropout = nn.Dropout(p = 0.05)
+        self.dropout_2 = nn.Dropout(p = 0.1) 
         
-    @print_forward_shapes
-    def forward(self, x, context, timestep_emb=None):
+    def forward(self, x, context, timestep_emb):
         residual_1 = x
-        x_mamba = self.mamba_block(x)
+        x_mamba = self.dropout(self.mamba_block(x))
         x_mamba = self.scale_shift_1(x_mamba, context.mean(dim=1), timestep_emb)
         x_mamba = self.norm_1(x_mamba)
-        x_mamba = x_mamba * self.scale_1
-        attn_inp = x_mamba + residual_1
+        attn_inp = x_mamba * self.scale_1 + residual_1
+
         x_attn = self.cross_attn(attn_inp, context)
-        x_attn = self.scale_shift_2(x_attn, context.mean(dim=1), timestep_emb)
-        x_attn = self.norm_2(x_attn)
-        x_attn = x_attn * self.scale_2 #after this could be dropout
-        output = x_attn + attn_inp
+        x_attn = self.scale_shift_2(x_attn, context.mean(dim=1), timestep_emb) #RMSNorm after dropout?
+        x_attn = self.norm_2(self.dropout_2(x_attn))
+        output = x_attn * self.scale_2 + attn_inp
         return output
 
