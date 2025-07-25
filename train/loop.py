@@ -131,7 +131,7 @@ class AdvancedDiffusionTrainer:
         with autocast(device_type="cuda"):
             predicted_noise, noise, latents = self.model(images, timesteps, text_prompts)
             target = self.model.noise_scheduler.get_v_target(latents, noise, timesteps) if self.use_v_param else noise
-            # Ensure timesteps are on the same device as snr
+            # Ensure timesteps are on the same device as snr, kode nya bloated apa karena loss juga ya? 
             snr = self.model.noise_scheduler.snr[timesteps.to(self.model.noise_scheduler.snr.device)].to(images.device)
             loss = self.criterion(predicted_noise, target, timesteps, snr)
 
@@ -198,9 +198,10 @@ class AdvancedDiffusionTrainer:
             for batch in progress_bar:
                 stats = self.training_step(batch)
                 epoch_losses.append(stats['loss'])
-
+                #print(f"Learning Rate: {stats['lr']:.6f}") #karena learning rate nya sekarang per-step, bukan per-epoch
             avg_train_loss = sum(epoch_losses) / len(epoch_losses)
             print(f"📉 Avg Train Loss: {avg_train_loss:.4f}")
+            
             #print(f"Avg Train Loss: {avg_train_loss:.4f}")
 
             # Validation
@@ -214,20 +215,18 @@ class AdvancedDiffusionTrainer:
 
                 avg_val_loss = sum(val_losses) / len(val_losses)
                 print(f"🔎 Validation Loss: {avg_val_loss:.4f}")
-            
-
             # Save per-epoch checkpoint
-            # epoch_cp_path = os.path.join(checkpoint_dir, f"cp_epoch{epoch}.pt")
-            # self.checkpoint(epoch_cp_path, epoch, avg_val_loss)
+                epoch_cp_path = os.path.join(checkpoint_dir, f"cp_epoch{epoch}.pt")
+                self.checkpoint(epoch_cp_path, epoch, avg_val_loss)
 
-            # # Save best checkpoint if improved
-            # if avg_val_loss < best_val_loss:
-            #     best_val_loss = avg_val_loss
-            #     best_cp_path = os.path.join(checkpoint_dir, "best_model.pt")
-            #     self.checkpoint(best_cp_path, epoch, avg_val_loss)# Early stopping
+                # Save best checkpoint if improved
+                if avg_val_loss < best_val_loss:
+                    best_val_loss = avg_val_loss
+                    best_cp_path = os.path.join(checkpoint_dir, "best_model.pt")
+                    self.checkpoint(best_cp_path, epoch, avg_val_loss)# Early stopping
 
-            # if self.early_stop(avg_val_loss):
-            #     print("⏹️ Early stopping triggered.")
-            #     continue
+                if self.early_stop(avg_val_loss):
+                    print("⏹️ Early stopping triggered.")
+                    continue
             
 

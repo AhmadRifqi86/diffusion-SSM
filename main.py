@@ -17,7 +17,7 @@ def main():
         'weight_decay': 0.01,
         'num_epochs': 200,
         'optimizer': 'adamw',
-        'batch_size': 8,
+        'batch_size': 4,
         'image_size': 256,
         'num_workers': 2,
         'patience': 20,
