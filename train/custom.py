@@ -29,7 +29,7 @@ class MinSNRVLoss(nn.Module):
         loss = loss.mean(dim=[1, 2, 3])  # Average over spatial dimensions
         
         # Min-SNR weighting - prevents over-optimization on high-noise timesteps
-        snr_weights = torch.minimum(snr, torch.full_like(snr, self.gamma)) / snr
+        snr_weights = (torch.minimum(snr, torch.full_like(snr, self.gamma)) / snr).detach()
         weighted_loss = loss * snr_weights
         
         return weighted_loss.mean()

@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 from models.diffuse import UShapeMambaDiffusion
-from train.loop import AdvancedDiffusionTrainer
+from train.trainer import AdvancedDiffusionTrainer
 from train.dataloader import create_datasets_with_indices
 import os
 
@@ -98,7 +98,7 @@ def main():
         use_v_parameterization=True,
         checkpoint_dir=config['checkpoint_dir']
     )
-    trainer.train(train_loader, val_loader, num_epochs=config['num_epochs'], checkpoint_dir=config['checkpoint_dir'])
+    trainer.train(train_loader, val_loader, config=config)
 
 if __name__ == "__main__":
     main()
