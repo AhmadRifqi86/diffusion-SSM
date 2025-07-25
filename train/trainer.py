@@ -1,6 +1,7 @@
 import torch
 import torch.optim as optim
 from torch.amp import GradScaler, autocast
+from train.dataloader import collate_fn, create_datasets_with_indices
 from train.custom import CosineAnnealingWarmRestartsWithDecay, EarlyStopping
 from train.custom import EMAModel, MinSNRVLoss, GradientClipperWithNormTracking
 from models.diffuse import UShapeMambaDiffusion
@@ -11,7 +12,7 @@ from tqdm import tqdm
 import os
 
 
-class AdvancedDiffusionTrainer:
+class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
     """
     Complete advanced training setup incorporating all improvements
     """
@@ -83,6 +84,7 @@ class AdvancedDiffusionTrainer:
         self.best_loss = checkpoint.get('val_loss', float('inf'))
         self.learning_rates = checkpoint.get('lr', [])
         print(f"✅ Resumed training from {checkpoint_path} at epoch {self.start_epoch}, best loss: {self.best_loss:.4f}")
+        return checkpoint
 
     def training_step(self, batch):
         """Single training step with autocast, EMA, Min-SNR, grad clipping"""
@@ -157,65 +159,92 @@ class AdvancedDiffusionTrainer:
         self.model.train()
         return avg_val_loss
     
-    def train(self, data_loader, val_dataloader, config):  #nanti param ini ganti config
+    def train(self, config, val_loader=None):
+        device = next(self.model.parameters()).device
         best_val_loss = float('inf')
+        self.config = config or {}
+        num_epochs = config.Train.num_epochs
+        checkpoint_path = config.Train.checkpoint_path
+        self.checkpoint_dir = config.Train.checkpoint_dir
         start_epoch = 0
-        num_epochs = config.get('num_epochs', 1000)
-        checkpoint_dir = config.get('checkpoint_dir', None)
-        
-        if config.get('resume_from_checkpoint'): #apa ganti pake checkpoint path aja?
-            if os.path.exists(config['resume_from_checkpoint']):
-                print(f"Resuming from checkpoint: {config['resume_from_checkpoint']}")
-                self.resume(config['resume_from_checkpoint'])
-                start_epoch = self.start_epoch
-            else:
-                print(f"Checkpoint {config['resume_from_checkpoint']} not found, starting fresh.")
-        #print("len(data_loader):", len(data_loader))
+
+        train_indices = None
+        val_indices = None
+
+        # Resume from checkpoint if available
+        if checkpoint_path and os.path.exists(checkpoint_path):
+            print(f"📦 Resuming from checkpoint: {checkpoint_path}")
+            checkpoint = self.resume(checkpoint_path)
+            train_indices = checkpoint.get('train_indices')
+            val_indices = checkpoint.get('val_indices')
+            start_epoch = self.start_epoch
+            print(f"🔄 Checkpoint loaded. Resuming from epoch {start_epoch}")
+        else:
+            print("🚀 Starting training from scratch.")
+
+        # Create datasets and dataloaders inside train()
+        train_dataset, val_dataset, train_indices, val_indices = create_datasets_with_indices(
+            config, train_indices, val_indices
+        )
+
+        print(f"📊 Created train dataset with {len(train_dataset)} samples")
+        if val_dataset:
+            print(f"📊 Created val dataset with {len(val_dataset)} samples")
+
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=config.Train.batch_size,
+            shuffle=True,
+            num_workers=config.Train.num_workers,
+            pin_memory=True,
+            collate_fn=collate_fn
+        )
+
+        # Only use external val_loader if passed
+        if val_loader is None and val_dataset:
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=config.Train.batch_size,
+                shuffle=False,
+                num_workers=config.Train.num_workers,
+                pin_memory=True,
+                collate_fn=collate_fn
+            )
+
+        # ============ Training Loop ============
         for epoch in range(start_epoch, num_epochs + 1):
-            print(f"📘 Epoch {epoch}/{num_epochs}")
+            print(f"\n📘 Epoch {epoch}/{num_epochs}")
             self.model.train()
             epoch_losses = []
 
-            progress_bar = tqdm(data_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
+            progress_bar = tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs}")
             for batch in progress_bar:
                 stats = self.training_step(batch)
                 epoch_losses.append(stats['loss'])
-                #print(f"Learning Rate: {stats['lr']:.2e}") #karena learning rate nya sekarang per-step, bukan per-epoch
-            avg_train_loss = sum(epoch_losses) / len(epoch_losses)
-            print(f"📉 Avg Train Loss: {avg_train_loss:.2e}")
-            # printing final learning rate for the epoch
-            #print(f"Avg Train Loss: {avg_train_loss:.4f}")
 
-            # Validation
-            self.model.eval()
-            val_losses = []
+            avg_train_loss = sum(epoch_losses) / len(epoch_losses)
+            print(f"📉 Avg Train Loss: {avg_train_loss:.6f}")
+
             avg_val_loss = 0.0
-            if val_dataloader is not None:
+            if val_loader:
+                self.model.eval()
+                val_losses = []
                 with torch.no_grad():
-                    for val_batch in val_dataloader:
+                    for val_batch in val_loader:
                         val_loss = self.validate(val_batch)
                         val_losses.append(val_loss.item())
-
                 avg_val_loss = sum(val_losses) / len(val_losses)
-                print(f"🔎 Validation Loss: {avg_val_loss:.4f}")
-    
-            # Save per-epoch checkpoint
-            if checkpoint_dir is not None:
-                if epoch > 0:
-                    prev_checkpoint_path = os.path.join(checkpoint_dir, f"cp_epoch{epoch-1}.pt")
-                    os.remove(prev_checkpoint_path)
+                print(f"🔎 Validation Loss: {avg_val_loss:.6f}")
 
-                epoch_cp_path = os.path.join(checkpoint_dir, f"cp_epoch{epoch}.pt")
-                self.checkpoint(epoch_cp_path, epoch, avg_val_loss)
-            else:
-                print("No checkpoint directory specified, skipping checkpoint save.")
-                # Save best checkpoint if improved
-            # if avg_val_loss < best_val_loss:
-            #     best_val_loss = avg_val_loss
-            #     best_cp_path = os.path.join(checkpoint_dir, "best_model.pt")
-            #     self.checkpoint(best_cp_path, epoch, avg_val_loss)# Early stopping
+            # Save checkpoint every epoch
+            if self.checkpoint_dir:
+                cp_path = os.path.join(self.checkpoint_dir, f"cp_epoch{epoch}.pt")
+                self.checkpoint(cp_path, epoch, avg_val_loss, train_indices, val_indices)
 
+            # Early stopping
             if self.early_stop(avg_val_loss, self.model):
                 print("⏹️ Early stopping triggered.")
                 continue
+
+
 

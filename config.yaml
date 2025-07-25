@@ -63,8 +63,8 @@ Train:
     val_dataset: "dataset/val"
     train_annotation: "dataset/test"
     val_annotation: "dataset/test"
-    train_indices: 10000
-    val_indices: 500
+    train_subset: 10000
+    val_subset: 500
   Checkpoint:
     enabled: true
     checkpoint_dir: "checkpoints_cosineDecay"

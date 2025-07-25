@@ -139,9 +139,9 @@ class UShapeMambaDiffusion(nn.Module):
         self.vae = AutoencoderKL.from_pretrained(config.Diffuser.vae_model_name, torch_dtype=torch.float16).to(self.device)
         
         # Load Hugging Face CLIP encoder (only option now)
-        print(f"Loading Hugging Face CLIP: {config.Diffuser.clip_model_name}")
-        self.clip_text_encoder = CLIPTextModel.from_pretrained(config.Diffuser.clip_model_name)
-        self.clip_tokenizer = CLIPTokenizer.from_pretrained(config.Diffuser.clip_model_name)
+        print(f"Loading Hugging Face CLIP: {config.Model.Diffuser.clip_model_name}")
+        self.clip_text_encoder = CLIPTextModel.from_pretrained(config.Model.Diffuser.clip_model_name)
+        self.clip_tokenizer = CLIPTokenizer.from_pretrained(config.Model.Diffuser.clip_model_name)
         context_dim = self.clip_text_encoder.config.hidden_size
         #print("CLIP context dim", context_dim)
         # Get VAE latent channels
@@ -151,12 +151,12 @@ class UShapeMambaDiffusion(nn.Module):
         self.unet = UShapeMamba(
             config,
             in_channels=vae_latent_channels,
-            model_channels=config.Unet.model_channels,
+            model_channels=config.Model.Unet.model_channels,
             context_dim=context_dim,
-            time_embed_dim=config.Unet.time_dim)
+            time_embed_dim=config.Model.Unet.time_dim)
         
         # Noise scheduler
-        self.noise_scheduler = NoiseScheduler(config.Diffuser.num_train_timesteps).to(self.device)
+        self.noise_scheduler = NoiseScheduler(config.Model.Diffuser.num_train_timesteps).to(self.device)
         
         # Freeze pre-trained components
         for param in self.vae.parameters():

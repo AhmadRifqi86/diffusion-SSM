@@ -50,9 +50,9 @@ class DownBlock(nn.Module):
         
         self.to_main_block = nn.Linear(out_channels, out_channels)
         self.main_block = MainBlockSerial(out_channels, context_dim, time_dim,
-                                          heads = config.CrossAttention.heads, dim_head=config.CrossAttention.dim_head, 
-                                          d_state=config.Mamba.d_state, d_conv=config.Mamba.d_conv, 
-                                          expands=config.Mamba.expands)
+                                          heads = config.Model.CrossAttention.heads, dim_head=config.Model.CrossAttention.dim_head, 
+                                          d_state=config.Model.Mamba.d_state, d_conv=config.Model.Mamba.d_conv, 
+                                          expands=config.Model.Mamba.expands)
         
         self.from_main_block = nn.Linear(out_channels, out_channels)
         self.downsample = nn.Conv2d(out_channels, out_channels, 4, stride=2, padding=1)
@@ -101,9 +101,9 @@ class UpBlock(nn.Module):
         # Main block processing - consistent with DownBlock and MiddleBlock
         self.to_main_block = nn.Linear(out_channels, out_channels)
         self.main_block = MainBlockSerial(out_channels, context_dim, time_dim,
-                                          heads = config.CrossAttention.heads, dim_head=config.CrossAttention.dim_head, 
-                                          d_state=config.Mamba.d_state, d_conv=config.Mamba.d_conv, 
-                                          expands=config.Mamba.expands)
+                                          heads = config.Model.CrossAttention.heads, dim_head=config.Model.CrossAttention.dim_head, 
+                                          d_state=config.Model.Mamba.d_state, d_conv=config.Model.Mamba.d_conv, 
+                                          expands=config.Model.Mamba.expands)
         self.from_main_block = nn.Linear(out_channels, out_channels)
         
     #@print_forward_shapes
@@ -148,9 +148,9 @@ class MiddleBlock(nn.Module):
         # Main block processing
         self.to_main_block = nn.Linear(channels, channels)
         self.main_block = MainBlockSerial(channels, context_dim, time_dim, 
-                                          heads = config.CrossAttention.heads, dim_head=config.CrossAttention.dim_head, 
-                                          d_state=config.Mamba.d_state, d_conv=config.Mamba.d_conv, 
-                                          expands=config.Mamba.expands)
+                                          heads = config.Model.CrossAttention.heads, dim_head=config.Model.CrossAttention.dim_head, 
+                                          d_state=config.Model.Mamba.d_state, d_conv=config.Model.Mamba.d_conv, 
+                                          expands=config.Model.Mamba.expands)
         self.from_main_block = nn.Linear(channels, channels)
         
         

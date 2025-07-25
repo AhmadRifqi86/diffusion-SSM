@@ -8,25 +8,31 @@ from torchvision import transforms
 import os
 from torch.utils.data import Dataset, DataLoader
 
-def create_datasets_with_indices(config, train_indices=None, val_indices=None):
+
+def collate_fn(batch):
+    images = torch.stack([item['image'] for item in batch])
+    captions = [item['caption'] for item in batch]
+    return images, captions
+
+def create_datasets_with_indices(config): #ini aja yg diubah berarti
     """Create datasets with optional indices for subsetting"""
     train_dataset = None
     val_dataset = None
     
     # Create training dataset
-    if os.path.exists(config['train_annotations']):
+    if os.path.exists(config.Train.Dataset.train_annotations):
         full_train_dataset = COCODataset(
-            config['train_annotations'],
-            config['train_image_dir'],
-            config['image_size']
+            config.Train.Dataset.train_annotations,
+            config.Train.Dataset.train_dataset,
+            config.Train.Dataset.img_size
         )
         
         if train_indices is not None:
             # Use provided indices (for resuming)
             train_dataset = torch.utils.data.Subset(full_train_dataset, train_indices)
-        elif config.get('train_subset_size') is not None:
+        elif config.Train.Dataset.train_subset is not None:
             # Create new random subset
-            subset_size = min(config['train_subset_size'], len(full_train_dataset))
+            subset_size = min(config.Train.Dataset.train_subset, len(full_train_dataset))
             train_indices = random.sample(range(len(full_train_dataset)), subset_size)
             train_dataset = torch.utils.data.Subset(full_train_dataset, train_indices)
         else:
@@ -37,19 +43,19 @@ def create_datasets_with_indices(config, train_indices=None, val_indices=None):
         train_indices = None
     
     # Create validation dataset
-    if os.path.exists(config['val_annotations']):
+    if os.path.exists(config.Train.Dataset.val_annotations):
         full_val_dataset = COCODataset(
-            config['val_annotations'],
-            config['val_image_dir'],
-            config['image_size']
+            config.Train.Dataset.val_annotations,
+            config.Train.Dataset.val_dataset,
+            config.Train.Dataset.img_size
         )
         
         if val_indices is not None:
             # Use provided indices (for resuming)
             val_dataset = torch.utils.data.Subset(full_val_dataset, val_indices)
-        elif config.get('val_subset_size') is not None:
+        elif config.Train.Dataset.val_subset is not None:
             # Create new random subset
-            subset_size = min(config['val_subset_size'], len(full_val_dataset))
+            subset_size = min(config.Train.Dataset.val_subset, len(full_val_dataset))
             val_indices = random.sample(range(len(full_val_dataset)), subset_size)
             val_dataset = torch.utils.data.Subset(full_val_dataset, val_indices)
         else:
