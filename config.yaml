@@ -1,0 +1,75 @@
+Model:
+  Global:
+    img_dim: 256
+    context_dim: 768
+    time_dim: 320
+  CrossAttention:
+    heads: 8
+    dim_head: 64
+  Mamba:
+    d_state: 16
+    d_conv: 4
+    expands: 2
+  Unet:
+    in_channel: 4
+    model_channels: 320
+    dropout: 0.1
+  Diffuser:
+    clip_model_name: "openai/clip-vit-large-patch14"
+    vae_model_name: "stabilityai/sd-vae-ft-ema"
+    train_timesteps: 1000
+
+Optimizer:  #seems adamW config still kinda wrong, 
+  Adamw:
+    base_lr: 1e-4
+    init_lr: 1e-6
+    weight_decay: 0.01
+    warmup_ratio: 0.05
+  Autocast: true
+  ParamGroups:
+    mamba_block:
+      lr: 1e-4
+      weight_decay: 0.01
+    CrossAttention:
+      lr: 5e-5
+      weight_decay: 0.01
+    time_embed:
+      lr: 1e-4
+      weight_decay: 0.0
+    scale_shift:
+      lr: 1e-4
+      weight_decay: 0.0
+    vae_proj:
+      lr: 5e-5
+      weight_decay: 0.0
+    context_proj:
+      lr: 5e-5
+      weight_decay: 0.0
+
+Scheduler:
+  sequence:
+    - name: LinearLR
+      end_factor: 1.0
+      total_iters: 500
+    - name: CosineAnnealingWarmRestarts
+      T_0: 1000
+      T_mult: 2
+      eta_min: 1e-6
+      freq_mult: 0.9
+      total_iters: 2000   # Used for milestone only
+
+Train:
+  use_v_parameterization: true
+  batch_size: 4
+  num_epochs: 200
+  Checkpoint:
+    enabled: true
+    checkpoint_dir: "checkpoints_cosineDecay"
+    checkpoint_path: null  # or "checkpoints/last.pt"
+  EarlyStopping:
+    patience: 10
+    min_progress: 0.001
+
+Deploy:
+  deploy_as: "onnx"  # or "engine"
+  precision: "fp16"  # or "fp32"

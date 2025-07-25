@@ -213,5 +213,25 @@ class EMAModel:
     
     def restore(self):
         for name, param in self.model.named_parameters():
-            if param.requires_grad:
+            if param.requires_grad and name in self.backup:
                 param.data = self.backup[name]
+
+    def state_dict(self):
+        """
+        Returns a copy of the EMA shadow weights for saving.
+        """
+        return {k: v.clone() for k, v in self.shadow.items()}
+    
+    def load_state_dict(self, state_dict):
+        """
+        Loads EMA weights from a state dict. Keys must match model param names.
+        """
+        missing = []
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                if name in state_dict:
+                    self.shadow[name] = state_dict[name].clone()
+                else:
+                    missing.append(name)
+        if missing:
+            print(f"[EMAModel] Warning: Missing EMA weights for {len(missing)} parameters.")

@@ -6,6 +6,7 @@ from train.custom import EMAModel, MinSNRVLoss, GradientClipperWithNormTracking
 from models.diffuse import UShapeMambaDiffusion
 from models.blocks import CrossAttention
 import logging
+from train.factory import OptimizerSchedulerFactory
 from tqdm import tqdm
 import os
 
@@ -14,34 +15,21 @@ class AdvancedDiffusionTrainer:
     """
     Complete advanced training setup incorporating all improvements
     """
-    def __init__(self, model: UShapeMambaDiffusion, base_lr=1e-4, use_v_parameterization=True, checkpoint_dir="checkpoints"):
+    def __init__(self, model: UShapeMambaDiffusion, config):
         self.model = model
-        self.use_v_param = use_v_parameterization
-        # tambah self.config
-        # Min-SNR loss
+        self.use_v_param = config.use_v_parameterization
         self.criterion = MinSNRVLoss(gamma=5.0)
-
-        # EMA model for stable sampling
         self.ema_model = EMAModel(model, decay=0.9999)
 
         # Multi-component optimizer
-        self.optimizer = self._create_advanced_optimizer(base_lr)
-        # self.optimizer = torch.optim.AdamW(
-        #     model.parameters(), 
-        #     lr=1e-6,
-        #     weight_decay=0.01
-        # )
         self.early_stop = EarlyStopping(patience=20, min_delta=1e-4, restore_best_weights=True)
-
-        # Advanced scheduler, consider using sequentialLR
-        # self.scheduler = CosineAnnealingWarmRestartsWithDecay(
-        #     self.optimizer, T_0=100, freq_mult=1.5, eta_min=1e-6, decay=0.9)
-
-        self.scheduler = self._create_advanced_scheduler()
+        
+        self.optimizer = OptimizerSchedulerFactory.create_advanced_optimizer(self.model, self.config)
+        self.scheduler = OptimizerSchedulerFactory.create_advanced_scheduler(self.optimizer, self.config)
 
         # Gradient management
         self.grad_clipper = GradientClipperWithNormTracking(max_norm=1.0)
-        self.scaler = GradScaler(enabled=torch.cuda.is_available())
+        self.scaler = GradScaler(enabled=torch.cuda.is_available()) # if dtype for train is FP16, else no need for GradScale 
 
         # Loss tracking
         self.loss_history = []
@@ -51,77 +39,9 @@ class AdvancedDiffusionTrainer:
 
         # Internal tracking
         self.start_epoch = 0
-        self.checkpoint_dir = checkpoint_dir #ganti jadi config aja
+        self.checkpoint_dir = config.checkpoint_dir #ganti jadi config aja
         self.logger = logging.getLogger(__name__)
 
-    def _create_advanced_optimizer(self, base_lr):
-        """Create optimizer with structured parameter groups by module type and role."""
-        param_groups = []
-        used = set()
-
-        def add_group(name, params, lr_mult=1.0, wd=0.01):
-            """Add a parameter group for optimizer."""
-            filtered = [p for p in params if p.requires_grad and id(p) not in used]
-            for p in filtered:
-                used.add(id(p))
-            if filtered:
-                param_groups.append({'params': filtered, 'lr': base_lr * lr_mult, 'weight_decay': wd})
-
-        # --- Named module patterns and their custom LR / weight decay
-        pattern_config = {
-            'mamba_block':     (1.5, 0.01),
-            'CrossAttention':  (1.3, 0.01),  # by module type
-            'time_embed':      (2.0, 0.005),
-            'scale_shift':     (2.0, 0.005),
-            'vae_proj':        (0.2, 0.0),
-            'context_proj':    (0.2, 0.0),
-        }
-
-        # --- Group known patterns (by name or type)
-        for name, module in self.model.named_modules():
-            for key, (lr_mult, wd) in pattern_config.items():
-                if key in name or (key == 'CrossAttention' and isinstance(module, CrossAttention)):
-                    add_group(name, module.parameters(), lr_mult=lr_mult, wd=wd)
-                    break  # prevent double-assignment
-
-        # --- U-Net block structure (decaying LR)
-        if hasattr(self.model, 'unet'):
-            for i, block in enumerate(self.model.unet.down_blocks):
-                add_group(f"unet.down_blocks.{i}", block.parameters(), lr_mult=(0.95 ** i), wd=0.01)
-            for i, block in enumerate(self.model.unet.up_blocks):
-                add_group(f"unet.up_blocks.{i}", block.parameters(), lr_mult=(0.95 ** i), wd=0.01)
-            add_group("unet.middle_block", self.model.unet.middle_block.parameters(), lr_mult=0.7, wd=0.01)
-
-        # --- Catch-all fallback
-        remaining = [p for p in self.model.parameters() if p.requires_grad and id(p) not in used]
-        if remaining:
-            param_groups.append({'params': remaining, 'lr': base_lr, 'weight_decay': 0.01})
-
-        return torch.optim.AdamW(param_groups, betas=(0.9, 0.999), eps=1e-8)
-    
-    def _create_advanced_scheduler(self):
-        sched_1 = torch.optim.lr_scheduler.LinearLR(
-            self.optimizer,
-            start_factor= 5e-7/5e-5, #init_lr/base_lr#config['init_lr'] / config['learning_rate'],
-            end_factor=1.0,
-            total_iters=int(0.05 * 1000 )
-        )
-        #print(f"sched_2 starting from epoch: {int(config.get('warmup_ratio', 0.1)*config.get('num_epochs'))}")
-        sched_2 = CosineAnnealingWarmRestartsWithDecay(
-            self.optimizer,
-            T_0=100, #config.get('T_0', 20),
-            T_mult= 0.9,#config.get('T_mult', 1),
-            eta_min= 1e-6,#config.get('eta_min', 1e-6),
-            decay=0.9, #config.get('decay', 0.9),
-            freq_mult=0.9 #config.get('freq_mult', 1.0)
-        )
-        #print(f"milestones: {int(config.get('warmup_epochs', 10)*config.get('num_epochs'))}")
-        return torch.optim.lr_scheduler.SequentialLR(
-            self.optimizer,
-            schedulers=[sched_1, sched_2],
-            milestones=[int(0.05*1000)]
-            #milestones=[1+int(config.get('warmup_ratio', 0.1)*config.get('num_epochs'))]
-        )
 
     def checkpoint(self, save_path, epoch, val_loss):
         """
@@ -133,9 +53,9 @@ class AdvancedDiffusionTrainer:
         checkpoint = {  #checkpointing early stopping and train_indices
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
-            #'ema_model_state_dict': self.ema_model.state_dict(),
+            'ema_model_state_dict': self.ema_model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'scaler_state_dict': self.scaler.state_dict(),
+            'scaler_state_dict': self.scaler.state_dict() if hasattr(self, 'scaler') else None,
             'scheduler_state_dict': self.scheduler.state_dict(),
             'val_loss': val_loss,
             'lr': self.learning_rates

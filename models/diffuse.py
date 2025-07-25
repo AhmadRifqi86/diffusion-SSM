@@ -7,143 +7,127 @@ from models.debug import print_forward_shapes
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import AutoencoderKL
 
+import torch
+import math
+
 class NoiseScheduler:
     """
-    Advanced noise scheduler with Zero Terminal SNR and v-parameterization
-    Now includes add_noise() and step() methods for training and inference
+    🔁 Unified Diffusion Noise Scheduler (DDPM + DDIM)
+    - Cosine schedule w/ Zero Terminal SNR
+    - Supports v-parameterization
+    - Training: add_noise()
+    - Inference: step_ddpm(), step_ddim()
     """
-    def __init__(self, num_train_timesteps=1000, beta_start=0.0001, beta_end=0.02, 
+    def __init__(self, num_train_timesteps=1000, beta_start=0.0001, beta_end=0.02,
                  prediction_type="v_prediction"):
         self.num_train_timesteps = num_train_timesteps
         self.prediction_type = prediction_type
-        
-        # Use cosine schedule for better distribution
+
+        # Cosine schedule with zero terminal SNR
         steps = num_train_timesteps + 1
         x = torch.linspace(0, num_train_timesteps, steps)
         alphas_cumprod = torch.cos(((x / num_train_timesteps) + 0.008) / 1.008 * math.pi * 0.5) ** 2
         alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-        
-        # 🔥 CRITICAL: Enforce Zero Terminal SNR
-        alphas_cumprod[-1] = 0.0  # Perfect noise at t=T
-        
+        alphas_cumprod[-1] = 0.0  # zero terminal SNR
+
         self.alphas_cumprod = alphas_cumprod[:-1]
         self.alphas_cumprod_prev = torch.cat([torch.tensor([1.0]), alphas_cumprod[:-2]])
-        
-        # For v-parameterization and general use
         self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod)
-        
-        # SNR for Min-SNR weighting
         self.snr = self.alphas_cumprod / (1 - self.alphas_cumprod)
-        
-        # For DDPM sampling
+
         self.betas = 1.0 - self.alphas_cumprod / self.alphas_cumprod_prev
-        self.betas[0] = self.betas[1]  # Prevent NaN
+        self.betas[0] = self.betas[1]
         self.alphas = 1.0 - self.betas
-    
-    def add_noise(self, original_samples, noise, timesteps): #is this using DDIM or DDPM?
+
+    def add_noise(self, x_start, noise, timesteps):
+        sqrt_alpha = self.sqrt_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+        sqrt_one_minus_alpha = self.sqrt_one_minus_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+        return sqrt_alpha * x_start + sqrt_one_minus_alpha * noise
+
+    def step_ddpm(self, model_output, t, x_t, generator=None):
         """
-        Add noise to samples for training (forward process)
+        ⬅ DDPM stochastic sampling step
         """
-        # Ensure timesteps are on the same device
-        #print(f"Original samples shape: {original_samples.device}")
-        
-        # Ensure timesteps are on the same device as sqrt_alphas_cumprod
-        # timesteps = timesteps.to(self.sqrt_alphas_cumprod.device)
-        # sqrt_alpha_prod = self.sqrt_alphas_cumprod[timesteps].to(original_samples.device)
-        # sqrt_one_minus_alpha_prod = self.sqrt_one_minus_alphas_cumprod[timesteps].to(original_samples.device)
-        
-        sqrt_alpha_prod = self.sqrt_alphas_cumprod[timesteps]
-        sqrt_one_minus_alpha_prod = self.sqrt_one_minus_alphas_cumprod[timesteps]
-        # Reshape for broadcasting
-        while len(sqrt_alpha_prod.shape) < len(original_samples.shape):
-            sqrt_alpha_prod = sqrt_alpha_prod.unsqueeze(-1)
-            sqrt_one_minus_alpha_prod = sqrt_one_minus_alpha_prod.unsqueeze(-1)
-        
-        noisy_samples = sqrt_alpha_prod * original_samples + sqrt_one_minus_alpha_prod * noise
-        return noisy_samples
-    
-    def step(self, model_output, timestep, sample, eta=0.0, generator=None):
-        """
-        Reverse diffusion step for inference (DDPM sampling)
-        Supports both noise prediction and v-prediction
-        """
-        t = timestep
-        prev_t = t - self.num_train_timesteps // self.num_inference_timesteps if hasattr(self, 'num_inference_timesteps') else t - 1
-        
-        # Get schedule values
-        alpha_prod_t = self.alphas_cumprod[t]
-        alpha_prod_t_prev = self.alphas_cumprod[prev_t] if prev_t >= 0 else torch.tensor(1.0)
-        beta_prod_t = 1 - alpha_prod_t
-        
-        # Convert v-prediction to x0 prediction if needed
+        prev_t = t - 1 if t > 0 else 0
+        alpha_t = self.alphas_cumprod[t]
+        alpha_prev = self.alphas_cumprod[prev_t]
+        beta_t = 1 - alpha_t
+
         if self.prediction_type == "v_prediction":
-            pred_original_sample = self.predict_start_from_v(sample, model_output, t)
-        else:  # epsilon prediction
-            pred_original_sample = (sample - torch.sqrt(beta_prod_t) * model_output) / torch.sqrt(alpha_prod_t)
-        
-        # Compute coefficients for prev_sample
-        alpha_prod_t_prev_sqrt = torch.sqrt(alpha_prod_t_prev)
-        beta_prod_t_prev_sqrt = torch.sqrt(1 - alpha_prod_t_prev)
-        
-        # Compute prev_sample mean
-        pred_sample_direction = beta_prod_t_prev_sqrt * model_output if self.prediction_type != "v_prediction" else beta_prod_t_prev_sqrt * self.get_epsilon_from_v(sample, model_output, t)
-        prev_sample = alpha_prod_t_prev_sqrt * pred_original_sample + pred_sample_direction
-        
-        # Add noise (DDPM sampling), change to DDIM later
+            x_0 = self.predict_start_from_v(x_t, model_output, t)
+            eps = self.get_epsilon_from_v(x_t, model_output, t)
+        else:
+            eps = model_output
+            x_0 = (x_t - torch.sqrt(beta_t) * eps) / torch.sqrt(alpha_t)
+
+        coef_x0 = torch.sqrt(alpha_prev)
+        coef_eps = torch.sqrt(1 - alpha_prev)
+        x_prev = coef_x0 * x_0 + coef_eps * eps
+
         if t > 0:
-            noise = torch.randn_like(sample, generator=generator)
-            variance = torch.sqrt(self._get_variance(t, prev_t)) * noise
-            prev_sample = prev_sample + variance
-            
-        return prev_sample
-    
+            noise = torch.randn_like(x_t, generator=generator)
+            var = torch.sqrt(self._get_variance(t, prev_t)) * noise
+            x_prev = x_prev + var
+
+        return x_prev
+
+    def step_ddim(self, model_output, t, x_t, eta=0.0, generator=None):
+        """
+        ⬅ DDIM deterministic sampling step
+        """
+        prev_t = t - 1 if t > 0 else 0
+        alpha_t = self.alphas_cumprod[t]
+        alpha_prev = self.alphas_cumprod[prev_t]
+        sqrt_alpha_t = torch.sqrt(alpha_t)
+        sqrt_alpha_prev = torch.sqrt(alpha_prev)
+
+        if self.prediction_type == "v_prediction":
+            x_0 = self.predict_start_from_v(x_t, model_output, t)
+            eps = self.get_epsilon_from_v(x_t, model_output, t)
+        else:
+            eps = model_output
+            x_0 = (x_t - torch.sqrt(1 - alpha_t) * eps) / sqrt_alpha_t
+
+        sigma = eta * torch.sqrt((1 - alpha_prev) / (1 - alpha_t) * (1 - alpha_t / alpha_prev))
+        dir_xt = torch.sqrt(1 - alpha_prev - sigma ** 2) * eps
+        noise = sigma * torch.randn_like(x_t, generator=generator) if eta > 0 else 0
+
+        x_prev = sqrt_alpha_prev * x_0 + dir_xt + noise
+        return x_prev
+
     def _get_variance(self, t, prev_t):
-        alpha_prod_t = self.alphas_cumprod[t]
-        alpha_prod_t_prev = self.alphas_cumprod[prev_t] if prev_t >= 0 else torch.tensor(1.0)
-        beta_prod_t = 1 - alpha_prod_t
-        beta_prod_t_prev = 1 - alpha_prod_t_prev
-        
-        variance = (beta_prod_t_prev / beta_prod_t) * (1 - alpha_prod_t / alpha_prod_t_prev)
-        return variance
-    
+        alpha_t = self.alphas_cumprod[t]
+        alpha_prev = self.alphas_cumprod[prev_t] if prev_t >= 0 else torch.tensor(1.0)
+        beta_t = 1 - alpha_t
+        beta_prev = 1 - alpha_prev
+        return (beta_prev / beta_t) * (1 - alpha_t / alpha_prev)
+
     def get_v_target(self, x_0, noise, timesteps):
-        """
-        🔥 V-parameterization: Predict velocity instead of noise
-        """
-        #timesteps = timesteps.to(self.sqrt_alphas_cumprod.device)
         sqrt_alpha = self.sqrt_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
         sqrt_one_minus_alpha = self.sqrt_one_minus_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
-        # Move to the same device as noise/x_0
-        device = noise.device
-        #sqrt_alpha = sqrt_alpha.to(device)
-        #sqrt_one_minus_alpha = sqrt_one_minus_alpha.to(device)
-        v = sqrt_alpha * noise - sqrt_one_minus_alpha * x_0
-        return v
-    
+        return sqrt_alpha * noise - sqrt_one_minus_alpha * x_0
+
     def predict_start_from_v(self, x_t, v, timesteps):
-        """Convert v-prediction back to x_0 prediction"""
         sqrt_alpha = self.sqrt_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
         sqrt_one_minus_alpha = self.sqrt_one_minus_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
-        
-        x_0 = sqrt_alpha * x_t - sqrt_one_minus_alpha * v
-        return x_0
-    
+        return sqrt_alpha * x_t - sqrt_one_minus_alpha * v
+
     def get_epsilon_from_v(self, x_t, v, timesteps):
-        """Convert v-prediction to epsilon (noise) prediction"""
         sqrt_alpha = self.sqrt_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
         sqrt_one_minus_alpha = self.sqrt_one_minus_alphas_cumprod[timesteps].view(-1, 1, 1, 1)
-        
-        epsilon = sqrt_alpha * v + sqrt_one_minus_alpha * x_t
-        return epsilon
-    
+        return sqrt_alpha * v + sqrt_one_minus_alpha * x_t
+
     def to(self, device):
-        """Move all scheduler tensors to device"""
         self.alphas_cumprod = self.alphas_cumprod.to(device)
-        self.sqrt_alphas_cumprod = self.sqrt_alphas_cumprod.to(device) 
+        self.alphas_cumprod_prev = self.alphas_cumprod_prev.to(device)
+        self.sqrt_alphas_cumprod = self.sqrt_alphas_cumprod.to(device)
         self.sqrt_one_minus_alphas_cumprod = self.sqrt_one_minus_alphas_cumprod.to(device)
         self.snr = self.snr.to(device)
+        self.betas = self.betas.to(device)
+        self.alphas = self.alphas.to(device)
         return self
+
     
 #------------------------------Diffusion Model-----------------------#
 class UShapeMambaDiffusion(nn.Module):

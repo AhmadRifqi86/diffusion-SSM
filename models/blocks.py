@@ -237,7 +237,7 @@ class MainBlockSerial(nn.Module):  #Maybe put dropout here
     Main block implementing the architecture from the second image, now supports optional timestep embedding.
     Uses official Mamba if available, otherwise falls back to MambaBlock.
     """
-    def __init__(self, dim, context_dim,  time_dim=160,heads=8, dim_head=64, d_state=16, d_conv=4, expand=2,):
+    def __init__(self, dim, context_dim, time_dim=160,heads=8, dim_head=64, d_state=16, d_conv=4, expand=2,):
         super().__init__()
         self.dim = dim
         self.cross_attn = CrossAttention(dim, context_dim, heads, dim_head)
@@ -261,9 +261,6 @@ class MainBlockSerial(nn.Module):  #Maybe put dropout here
         
     #@print_forward_shapes
     def forward(self, x, context, timestep_emb):
-        # print("MainBlock x_mamba shape: ", x_mamba.shape)
-        # print("MainBlock context shape: ", context.shape)
-        # print("MainBlock time shape: ", timestep_emb.shape)
         residual_1 = x
 
         x_mamba = self.dropout(self.mamba_block(x))
