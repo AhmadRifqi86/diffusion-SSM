@@ -10,6 +10,7 @@ import logging
 from train.factory import OptimizerSchedulerFactory
 from tqdm import tqdm
 import os
+from torch.utils.data import DataLoader
 
 
 class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset

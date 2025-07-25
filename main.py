@@ -1,5 +1,4 @@
 import torch
-from torch.utils.data import DataLoader
 from models.diffuse import UShapeMambaDiffusion
 from train.trainer import AdvancedDiffusionTrainer
 from train.dataloader import create_datasets_with_indices
