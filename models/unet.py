@@ -96,7 +96,7 @@ class UpBlock(nn.Module):
         
         # Main block processing - consistent with DownBlock and MiddleBlock
         self.to_main_block = nn.Linear(out_channels, out_channels)
-        self.main_block = MainBlockSerial(out_channels, context_dim)
+        self.main_block = MainBlockSerial(out_channels, context_dim, time_dim)
         self.from_main_block = nn.Linear(out_channels, out_channels)
         
     #@print_forward_shapes
@@ -140,7 +140,7 @@ class MiddleBlock(nn.Module):
 
         # Main block processing
         self.to_main_block = nn.Linear(channels, channels)
-        self.main_block = MainBlockSerial(channels, context_dim)
+        self.main_block = MainBlockSerial(channels, context_dim, time_dim)
         self.from_main_block = nn.Linear(channels, channels)
         
         
