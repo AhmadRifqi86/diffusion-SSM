@@ -5,6 +5,7 @@ import torch.optim.lr_scheduler as torch_sched
 import inspect
 # Example: from your custom scheduler implementation
 from train.custom import CosineAnnealingWarmRestartsWithDecay
+from models.diffuse import UShapeMambaDiffusion
 import os
 from omegaconf import OmegaConf
 
@@ -20,6 +21,11 @@ class OptimizerSchedulerFactory:
         if isinstance(config, OmegaConf):
             return config
         raise TypeError("Config must be a path to .yaml, a dict, or an OmegaConf object.")
+    #staticmethod to create model
+    @staticmethod
+    def create_model(config):
+        config = OptimizerSchedulerFactory.load_config(config)
+        return UShapeMambaDiffusion(config)
 
     @staticmethod
     def create_advanced_optimizer(model, config):

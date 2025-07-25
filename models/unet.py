@@ -40,7 +40,7 @@ class AdaptiveGroupNorm(nn.Module): #Replace GroupNorm with AdaptiveGroupNorm
         return x * (scale + 1) + shift
 
 class DownBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, time_dim, context_dim):
+    def __init__(self, in_channels, out_channels, time_dim, context_dim, config):
         super().__init__()
         
         self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
@@ -49,7 +49,11 @@ class DownBlock(nn.Module):
         # self.norm2 = nn.GroupNorm(8, out_channels)
         
         self.to_main_block = nn.Linear(out_channels, out_channels)
-        self.main_block = MainBlockSerial(out_channels, context_dim, time_dim)
+        self.main_block = MainBlockSerial(out_channels, context_dim, time_dim,
+                                          heads = config.CrossAttention.heads, dim_head=config.CrossAttention.dim_head, 
+                                          d_state=config.Mamba.d_state, d_conv=config.Mamba.d_conv, 
+                                          expands=config.Mamba.expands)
+        
         self.from_main_block = nn.Linear(out_channels, out_channels)
         self.downsample = nn.Conv2d(out_channels, out_channels, 4, stride=2, padding=1)
         self.norm1 = AdaptiveGroupNorm(8, out_channels, time_dim)
@@ -82,7 +86,7 @@ class DownBlock(nn.Module):
     
 
 class UpBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, skip_channels, time_dim, context_dim):
+    def __init__(self, in_channels, out_channels, skip_channels, time_dim, context_dim, config):
         super().__init__()
 
         self.upsample = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1)
@@ -96,7 +100,10 @@ class UpBlock(nn.Module):
         
         # Main block processing - consistent with DownBlock and MiddleBlock
         self.to_main_block = nn.Linear(out_channels, out_channels)
-        self.main_block = MainBlockSerial(out_channels, context_dim, time_dim)
+        self.main_block = MainBlockSerial(out_channels, context_dim, time_dim,
+                                          heads = config.CrossAttention.heads, dim_head=config.CrossAttention.dim_head, 
+                                          d_state=config.Mamba.d_state, d_conv=config.Mamba.d_conv, 
+                                          expands=config.Mamba.expands)
         self.from_main_block = nn.Linear(out_channels, out_channels)
         
     #@print_forward_shapes
@@ -130,7 +137,7 @@ class UpBlock(nn.Module):
 
 
 class MiddleBlock(nn.Module):
-    def __init__(self, channels, time_dim, context_dim):
+    def __init__(self, channels, time_dim, context_dim, config):
         super().__init__()
         
         self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
@@ -140,7 +147,10 @@ class MiddleBlock(nn.Module):
 
         # Main block processing
         self.to_main_block = nn.Linear(channels, channels)
-        self.main_block = MainBlockSerial(channels, context_dim, time_dim)
+        self.main_block = MainBlockSerial(channels, context_dim, time_dim, 
+                                          heads = config.CrossAttention.heads, dim_head=config.CrossAttention.dim_head, 
+                                          d_state=config.Mamba.d_state, d_conv=config.Mamba.d_conv, 
+                                          expands=config.Mamba.expands)
         self.from_main_block = nn.Linear(channels, channels)
         
         
@@ -169,8 +179,8 @@ class MiddleBlock(nn.Module):
         return h
 
 
-class UShapeMamba(nn.Module):
-    def __init__(self, in_channels=4,model_channels=160,time_embed_dim=160,context_dim=768):  # New parameter to control time embedding approach
+class UShapeMamba(nn.Module): #butuh pass config
+    def __init__(self, config,in_channels=4,model_channels=160,time_embed_dim=160,context_dim=768):  # New parameter to control time embedding approach
         super().__init__()
 
         self.time_embed = nn.Sequential(
@@ -191,12 +201,12 @@ class UShapeMamba(nn.Module):
         for i in range(4):
             out_ch = model_channels * (2 ** i)
             self.down_blocks.append(
-                DownBlock(in_ch, out_ch, time_embed_dim, context_dim)
+                DownBlock(in_ch, out_ch, time_embed_dim, context_dim, config)
             )
             down_channels.append(out_ch)
             in_ch = out_ch
 
-        self.middle_block = MiddleBlock(in_ch, time_embed_dim, context_dim)
+        self.middle_block = MiddleBlock(in_ch, time_embed_dim, context_dim, config)
 
         # Reverse for up path
         self.up_blocks = nn.ModuleList()
@@ -206,7 +216,7 @@ class UShapeMamba(nn.Module):
         for i, skip_ch in enumerate(skip_channels):
             out_ch = model_channels * (2 ** (2 - i)) if i < 3 else model_channels
             self.up_blocks.append(
-                UpBlock(up_in_channels, out_ch, skip_ch, time_embed_dim, context_dim)
+                UpBlock(up_in_channels, out_ch, skip_ch, time_embed_dim, context_dim, config)
             )
             up_in_channels = out_ch
 

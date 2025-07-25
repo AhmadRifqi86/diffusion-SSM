@@ -144,7 +144,7 @@ class CrossAttention(nn.Module): #maybe put dropout here
     Cross-attention module for conditioning on text embeddings.
     Handles x of shape [B, N, C] or [B, C, H, W].
     """
-    def __init__(self, dim, context_dim, heads=8, dim_head=64):
+    def __init__(self, dim, context_dim, heads=8, dim_head=64): #butuh pass config
         super().__init__()
         self.heads = heads
         self.dim_head = dim_head
@@ -237,7 +237,7 @@ class MainBlockSerial(nn.Module):  #Maybe put dropout here
     Main block implementing the architecture from the second image, now supports optional timestep embedding.
     Uses official Mamba if available, otherwise falls back to MambaBlock.
     """
-    def __init__(self, dim, context_dim, time_dim=160,heads=8, dim_head=64, d_state=16, d_conv=4, expand=2,):
+    def __init__(self, dim, context_dim, time_dim=160,heads=8, dim_head=64, d_state=16, d_conv=4, expand=2,): #butuh pass config
         super().__init__()
         self.dim = dim
         self.cross_attn = CrossAttention(dim, context_dim, heads, dim_head)

@@ -1,8 +1,4 @@
 Model:
-  Global:
-    img_dim: 256
-    context_dim: 768
-    time_dim: 320
   CrossAttention:
     heads: 8
     dim_head: 64
@@ -11,9 +7,8 @@ Model:
     d_conv: 4
     expands: 2
   Unet:
-    in_channel: 4
-    model_channels: 320
     dropout: 0.1
+    time_dim: 160
   Diffuser:
     clip_model_name: "openai/clip-vit-large-patch14"
     vae_model_name: "stabilityai/sd-vae-ft-ema"
@@ -62,6 +57,14 @@ Train:
   use_v_parameterization: true
   batch_size: 4
   num_epochs: 200
+  Dataset:
+    img_size: 256
+    train_dataset: "dataset/train"
+    val_dataset: "dataset/val"
+    train_annotation: "dataset/test"
+    val_annotation: "dataset/test"
+    train_indices: 10000
+    val_indices: 500
   Checkpoint:
     enabled: true
     checkpoint_dir: "checkpoints_cosineDecay"

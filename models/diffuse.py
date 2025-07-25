@@ -132,19 +132,16 @@ class NoiseScheduler:
 #------------------------------Diffusion Model-----------------------#
 class UShapeMambaDiffusion(nn.Module):
     def __init__(self, 
-                 vae_model_name="stabilityai/sd-vae-ft-mse",
-                 clip_model_name="openai/clip-vit-base-patch32",
-                 model_channels=160,
-                 num_train_timesteps=1000):  # Removed use_openai_clip parameter
+                 config):  # Removed use_openai_clip parameter
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # Load pre-trained VAE
-        self.vae = AutoencoderKL.from_pretrained(vae_model_name, torch_dtype=torch.float16).to(self.device)
+        self.vae = AutoencoderKL.from_pretrained(config.Diffuser.vae_model_name, torch_dtype=torch.float16).to(self.device)
         
         # Load Hugging Face CLIP encoder (only option now)
-        print(f"Loading Hugging Face CLIP: {clip_model_name}")
-        self.clip_text_encoder = CLIPTextModel.from_pretrained(clip_model_name)
-        self.clip_tokenizer = CLIPTokenizer.from_pretrained(clip_model_name)
+        print(f"Loading Hugging Face CLIP: {config.Diffuser.clip_model_name}")
+        self.clip_text_encoder = CLIPTextModel.from_pretrained(config.Diffuser.clip_model_name)
+        self.clip_tokenizer = CLIPTokenizer.from_pretrained(config.Diffuser.clip_model_name)
         context_dim = self.clip_text_encoder.config.hidden_size
         #print("CLIP context dim", context_dim)
         # Get VAE latent channels
@@ -152,12 +149,14 @@ class UShapeMambaDiffusion(nn.Module):
         
         # U-Shape Mamba denoiser with configurable time embedding
         self.unet = UShapeMamba(
+            config,
             in_channels=vae_latent_channels,
-            model_channels=model_channels,
-            context_dim=context_dim)
+            model_channels=config.Unet.model_channels,
+            context_dim=context_dim,
+            time_embed_dim=config.Unet.time_dim)
         
         # Noise scheduler
-        self.noise_scheduler = NoiseScheduler(num_train_timesteps).to(self.device)
+        self.noise_scheduler = NoiseScheduler(config.Diffuser.num_train_timesteps).to(self.device)
         
         # Freeze pre-trained components
         for param in self.vae.parameters():
