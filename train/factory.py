@@ -32,6 +32,7 @@ class OptimizerSchedulerFactory:
     def create_advanced_optimizer(model, config):
         #config = OptimizerSchedulerFactory.load_config(config)
         base_lr = config['Optimizer']['Adamw']['base_lr'] #change this line later in case im using other optimizer
+        print(f"optimizer base_lr: {base_lr:.2e}")
         param_groups = []
         used = set()
 
@@ -43,7 +44,8 @@ class OptimizerSchedulerFactory:
                 param_groups.append({
                     'params': filtered,
                     'lr': base_lr * lr_mult,
-                    'weight_decay': wd
+                    'weight_decay': wd,
+                    'name': name
                 })
 
         # Custom param groups

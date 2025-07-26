@@ -184,7 +184,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         val_indices = None
 
         # Resume from checkpoint if available
-        if checkpoint_path and os.path.exists(checkpoint_path):
+        if checkpoint_path and os.path.exists(checkpoint_path) and config.Train.Checkpoint.enabled:
             #checkpoint_path = os.path.abspath(checkpoint_path)
             print(f"📦 Resuming from checkpoint: {checkpoint_path}")
             checkpoint = self.resume(checkpoint_path)
@@ -238,6 +238,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
 
             avg_train_loss = sum(epoch_losses) / len(epoch_losses)
             print(f"📉 Avg Train Loss: {avg_train_loss:.6f}")
+            print(f"📈 Learning Rate: {stats['lr']:.2e}")
 
             avg_val_loss = 0.0
             if val_loader:

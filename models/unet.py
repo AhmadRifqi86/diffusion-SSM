@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 from models.blocks import MainBlockSerial, MainBlockParallel
-from models.debug import print_forward_shapes
+from tools.debug import print_forward_shapes
 
 class TimestepEmbedding(nn.Module):
     def __init__(self, dim):

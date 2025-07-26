@@ -46,11 +46,11 @@ Scheduler:
   sequence:
     - name: LinearLR
       end_factor: 1.0
-      total_iters: 500
-    - name: CosineAnnealingWarmRestartsWithDecay
-      T_0: 1000
-      freq_mult: 0.9
-      eta_min: 1e-6
+      total_iters: 250 
+    - name: CosineAnnealingWarmRestartsWithDecay   #match exact class name
+      T_0: 500  #number of step before first restart
+      freq_mult: 0.9  #frequency multiplier for subsequent restarts
+      eta_min: 1e-6  #minimum learning rate
       total_iters: 2000   # Used for milestone only
 
 Train:
@@ -67,11 +67,11 @@ Train:
     train_subset: 100
     val_subset: 20
   Checkpoint:
-    enabled: true
+    enabled: false
     checkpoint_dir: "checkpoints_cosineDecay"
     checkpoint_path: "checkpoints_cosineDecay/cp_epoch6.pt"  # null  # or "checkpoints/last.pt"
   EarlyStopping:
-    patience: 10
+    patience: 10   #in epochs
     min_progress: 0.001
 
 Deploy:

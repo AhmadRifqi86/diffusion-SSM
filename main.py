@@ -13,12 +13,6 @@ def main():
     config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     #print(f"📂 Loading configuration from: {config_path}")
     config = OptimizerSchedulerFactory.load_config(config_path)
-    # Build model
-    # model = UShapeMambaDiffusion(
-    #     vae_model_name="stabilityai/sd-vae-ft-mse",
-    #     clip_model_name="openai/clip-vit-base-patch32"
-    # ).to(device)
-
     model = OptimizerSchedulerFactory.create_model(config_path)
 
     print(f"📦 Model parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")

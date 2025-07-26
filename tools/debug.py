@@ -1,6 +1,7 @@
 import inspect
 import torch
 from functools import wraps
+import logging
 
 def print_forward_shapes(forward_fn):
     def wrapper(self, *args, **kwargs):
@@ -35,3 +36,14 @@ def print_forward_shapes(forward_fn):
             print(f"  Output: type={type(output)}")
         return output
     return wrapper 
+
+
+def log_learning_rate(scheduler):
+    def wrapper(*args, **kwargs):
+        DEBUG = False
+        if not DEBUG:
+            return scheduler.step(*args, **kwargs)
+        current_lr = scheduler.get_last_lr()[0]
+        logging.info(f"Learning Rate: {current_lr}")
+        return scheduler.step(*args, **kwargs)
+    return wrapper

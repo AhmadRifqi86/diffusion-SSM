@@ -3,7 +3,7 @@ import math
 import torch.nn as nn
 import torch.nn.functional as F
 from models.unet import UShapeMamba
-from models.debug import print_forward_shapes
+from tools.debug import print_forward_shapes
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import AutoencoderKL
 
