@@ -237,7 +237,7 @@ class MainBlockSerial(nn.Module):  #Maybe put dropout here
     Main block implementing the architecture from the second image, now supports optional timestep embedding.
     Uses official Mamba if available, otherwise falls back to MambaBlock.
     """
-    def __init__(self, dim, context_dim, time_dim=160,heads=8, dim_head=64, d_state=16, d_conv=4, expand=2,): #butuh pass config
+    def __init__(self, dim, context_dim, time_dim=160,heads=8, dim_head=64, d_state=16, d_conv=4, expands=2): #butuh pass config
         super().__init__()
         self.dim = dim
         self.cross_attn = CrossAttention(dim, context_dim, heads, dim_head)
@@ -248,10 +248,10 @@ class MainBlockSerial(nn.Module):  #Maybe put dropout here
                 d_model=dim,
                 d_state=d_state,
                 d_conv=d_conv,
-                expand=expand,
+                expand=expands,
             )
         else:
-            self.mamba_block = MambaBlock(dim, d_state, d_conv, expand)
+            self.mamba_block = MambaBlock(dim, d_state, d_conv, expands)
         self.scale_shift_2 = ScaleShift(dim, context_dim, time_dim)
         self.norm_2 = nn.RMSNorm(dim)
         self.scale_1 = nn.Parameter(torch.ones(1))

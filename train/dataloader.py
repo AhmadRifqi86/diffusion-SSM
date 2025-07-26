@@ -14,7 +14,7 @@ def collate_fn(batch):
     captions = [item['caption'] for item in batch]
     return images, captions
 
-def create_datasets_with_indices(config): #ini aja yg diubah berarti
+def create_datasets_with_indices(config, train_indices=None, val_indices=None): #ini aja yg diubah berarti
     """Create datasets with optional indices for subsetting"""
     train_dataset = None
     val_dataset = None
@@ -39,7 +39,7 @@ def create_datasets_with_indices(config): #ini aja yg diubah berarti
             # Use full dataset
             train_dataset = full_train_dataset
     else:
-        train_dataset = DummyDataset(num_samples=40, image_size=config['image_size'])
+        train_dataset = DummyDataset(num_samples=40, image_size=config.Train.Dataset.img_size)
         train_indices = None
     
     # Create validation dataset

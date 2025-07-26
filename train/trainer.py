@@ -19,15 +19,15 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
     """
     def __init__(self, model: UShapeMambaDiffusion, config):
         self.model = model
-        self.use_v_param = config.use_v_parameterization
+        self.use_v_param = config.Train.use_v_parameterization
         self.criterion = MinSNRVLoss(gamma=5.0)
         self.ema_model = EMAModel(model, decay=0.9999)
 
         # Multi-component optimizer
         self.early_stop = EarlyStopping(patience=20, min_delta=1e-4, restore_best_weights=True)
         
-        self.optimizer = OptimizerSchedulerFactory.create_advanced_optimizer(self.model, self.config)
-        self.scheduler = OptimizerSchedulerFactory.create_advanced_scheduler(self.optimizer, self.config)
+        self.optimizer = OptimizerSchedulerFactory.create_advanced_optimizer(self.model, config)
+        self.scheduler = OptimizerSchedulerFactory.create_advanced_scheduler(self.optimizer, config)
 
         # Gradient management
         self.grad_clipper = GradientClipperWithNormTracking(max_norm=1.0)
@@ -41,11 +41,11 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
 
         # Internal tracking
         self.start_epoch = 0
-        self.checkpoint_dir = config.checkpoint_dir #ganti jadi config aja
+        self.checkpoint_dir = config.Train.Checkpoint.checkpoint_dir #ganti jadi config aja
         self.logger = logging.getLogger(__name__)
 
 
-    def checkpoint(self, save_path, epoch, val_loss):
+    def checkpoint(self, save_path, epoch, val_loss, train_indices=None, val_indices=None):
         """
         Save a full training checkpoint at a specific path.
         `save_path` must be a full path like 'checkpoints/cp_epoch10.pt' or 'checkpoints/best_model.pt'
@@ -60,7 +60,9 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
             'scaler_state_dict': self.scaler.state_dict() if hasattr(self, 'scaler') else None,
             'scheduler_state_dict': self.scheduler.state_dict(),
             'val_loss': val_loss,
-            'lr': self.learning_rates
+            'lr': self.learning_rates,
+            'train_indices': train_indices,
+            'val_indices': val_indices
         }
 
         torch.save(checkpoint, save_path)
@@ -72,11 +74,12 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         `checkpoint_path` must be a full path like 'checkpoints/cp_epoch10.pt' or 'checkpoints/best_model.pt'
         """
         if not os.path.exists(checkpoint_path):
+            print(f"❌ Checkpoint file {checkpoint_path} does not exist. Cannot resume training.")
             raise FileNotFoundError(f"Checkpoint file {checkpoint_path} does not exist.")
 
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        #self.ema_model.load_state_dict(checkpoint['ema_model_state_dict'])
+        self.ema_model.load_state_dict(checkpoint['ema_model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
         self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
@@ -128,6 +131,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
 
     def validate(self, val_loader):
         """Validation loop for one epoch"""
+        self.ema_model.apply_shadow()  # <<< Use EMA weights
         self.model.eval()
         total_val_loss = 0
         num_batches = 0
@@ -135,17 +139,23 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         with torch.no_grad():
             for batch in tqdm(val_loader, desc="Validating"):
                 images, text_prompts = batch
+                device = next(self.model.parameters()).device
+                images = images.to(device)
+
                 timesteps = torch.randint(
                     0, self.model.noise_scheduler.num_train_timesteps,
-                    (images.shape[0],), device=images.device
+                    (images.shape[0],), device=device
                 )
-                images = images.to(next(self.model.parameters()).device)
-                timesteps = timesteps.to(next(self.model.parameters()).device)
+
                 with autocast(device_type="cuda"):
                     predicted_noise, noise, latents = self.model(images, timesteps, text_prompts)
-                    target = self.model.noise_scheduler.get_v_target(latents, noise, timesteps) if self.use_v_param else noise
-                    # Ensure timesteps are on the same device as snr
-                    snr = self.model.noise_scheduler.snr[timesteps.to(self.model.noise_scheduler.snr.device)].to(images.device)
+                    target = (
+                        self.model.noise_scheduler.get_v_target(latents, noise, timesteps)
+                        if self.use_v_param else noise
+                    )
+                    snr = self.model.noise_scheduler.snr[
+                        timesteps.to(self.model.noise_scheduler.snr.device)
+                    ].to(device)
                     loss = self.criterion(predicted_noise, target, timesteps, snr)
 
                 total_val_loss += loss.item()
@@ -158,6 +168,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
             self.best_loss = avg_val_loss
 
         self.model.train()
+        self.ema_model.restore()  # <<< Restore raw model weights
         return avg_val_loss
     
     def train(self, config, val_loader=None):
@@ -165,8 +176,8 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         best_val_loss = float('inf')
         self.config = config or {}
         num_epochs = config.Train.num_epochs
-        checkpoint_path = config.Train.checkpoint_path
-        self.checkpoint_dir = config.Train.checkpoint_dir
+        checkpoint_path = config.Train.Checkpoint.checkpoint_path
+        self.checkpoint_dir = config.Train.Checkpoint.checkpoint_dir
         start_epoch = 0
 
         train_indices = None
@@ -174,6 +185,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
 
         # Resume from checkpoint if available
         if checkpoint_path and os.path.exists(checkpoint_path):
+            #checkpoint_path = os.path.abspath(checkpoint_path)
             print(f"📦 Resuming from checkpoint: {checkpoint_path}")
             checkpoint = self.resume(checkpoint_path)
             train_indices = checkpoint.get('train_indices')
@@ -213,6 +225,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
             )
 
         # ============ Training Loop ============
+        prev_cp_path = None  # Track previous checkpoint path for deletion
         for epoch in range(start_epoch, num_epochs + 1):
             print(f"\n📘 Epoch {epoch}/{num_epochs}")
             self.model.train()
@@ -228,19 +241,27 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
 
             avg_val_loss = 0.0
             if val_loader:
-                self.model.eval()
+                #self.model.eval()
                 val_losses = []
                 with torch.no_grad():
-                    for val_batch in val_loader:
-                        val_loss = self.validate(val_batch)
-                        val_losses.append(val_loss.item())
+                    val_loss = self.validate(val_loader)
+                    val_losses.append(val_loss)
                 avg_val_loss = sum(val_losses) / len(val_losses)
                 print(f"🔎 Validation Loss: {avg_val_loss:.6f}")
 
             # Save checkpoint every epoch
-            if self.checkpoint_dir:
-                cp_path = os.path.join(self.checkpoint_dir, f"cp_epoch{epoch}.pt")
-                self.checkpoint(cp_path, epoch, avg_val_loss, train_indices, val_indices)
+            if self.checkpoint_dir and config.Train.Checkpoint.enabled:
+                if epoch > 0:
+                    cp_path = os.path.join(self.checkpoint_dir, f"cp_epoch{epoch}.pt")
+                    self.checkpoint(cp_path, epoch, avg_val_loss, train_indices, val_indices)
+                    # Delete the previous checkpoint if it exists
+                    if prev_cp_path and os.path.exists(prev_cp_path):
+                        try:
+                            os.remove(prev_cp_path)
+                        except Exception as e:
+                            print(f"Warning: Failed to delete previous checkpoint {prev_cp_path}: {e}")
+                    #print(f"✅ Checkpoint saved to {cp_path}")
+                    prev_cp_path = cp_path  # Update to current checkpoint path
 
             # Early stopping
             if self.early_stop(avg_val_loss, self.model):

@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-from utils import print_forward_shapes
 from models.blocks import MainBlockSerial, MainBlockParallel
 from models.debug import print_forward_shapes
 

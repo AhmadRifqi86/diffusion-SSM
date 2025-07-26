@@ -10,20 +10,22 @@ from train.factory import OptimizerSchedulerFactory
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"🔌 Using device: {device}")
-    config = OptimizerSchedulerFactory.load_config("config.yaml")
+    config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    #print(f"📂 Loading configuration from: {config_path}")
+    config = OptimizerSchedulerFactory.load_config(config_path)
     # Build model
-    model = UShapeMambaDiffusion(
-        vae_model_name="stabilityai/sd-vae-ft-mse",
-        clip_model_name="openai/clip-vit-base-patch32"
-    ).to(device)
+    # model = UShapeMambaDiffusion(
+    #     vae_model_name="stabilityai/sd-vae-ft-mse",
+    #     clip_model_name="openai/clip-vit-base-patch32"
+    # ).to(device)
+
+    model = OptimizerSchedulerFactory.create_model(config_path)
 
     print(f"📦 Model parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
     print("🚀 Using AdvancedDiffusionTrainer")
 
     # Create trainer
-    trainer = AdvancedDiffusionTrainer(
-        model,config=config,
-    )
+    trainer = AdvancedDiffusionTrainer(model,config=config)
 
     # Let trainer handle dataset restoration and checkpoint logic
     trainer.train(config=config)

@@ -81,7 +81,7 @@ class Lion(Optimizer):
         return loss
 
 class CosineAnnealingWarmRestartsWithDecay(torch.optim.lr_scheduler._LRScheduler):
-    def __init__(self, optimizer, T_0, T_mult=1, eta_min=0, decay=0.9, freq_mult=0.9, last_epoch=-1, warmup_epoch=None):
+    def __init__(self, optimizer, T_0, T_mult=1.0, freq_mult=1.0, eta_min=0, decay=0.9, last_epoch=-1):
         self.T_0 = T_0
         self.T_mult = T_mult
         self.eta_min = eta_min
@@ -186,52 +186,46 @@ class GradientClipperWithNormTracking:
         }
 
 class EMAModel:
-    """
-    🔥 Exponential Moving Average - CRITICAL for stable sampling
-    """
     def __init__(self, model, decay=0.9999):
         self.decay = decay
         self.model = model
         self.shadow = {}
         self.backup = {}
-        
-        # Initialize shadow parameters
+
+        # Match device of model parameters
         for name, param in model.named_parameters():
             if param.requires_grad:
-                self.shadow[name] = param.data.clone()
-    
+                self.shadow[name] = param.data.clone().detach().to(param.device)
+
     def update(self):
         for name, param in self.model.named_parameters():
             if param.requires_grad:
+                # Match device just in case
+                self.shadow[name] = self.shadow[name].to(param.device)
                 self.shadow[name] = self.decay * self.shadow[name] + (1 - self.decay) * param.data
-    
+
     def apply_shadow(self):
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 self.backup[name] = param.data.clone()
-                param.data = self.shadow[name]
-    
+                param.data = self.shadow[name].to(param.device)
+
     def restore(self):
         for name, param in self.model.named_parameters():
             if param.requires_grad and name in self.backup:
                 param.data = self.backup[name]
 
     def state_dict(self):
-        """
-        Returns a copy of the EMA shadow weights for saving.
-        """
-        return {k: v.clone() for k, v in self.shadow.items()}
-    
+        return {k: v.clone().cpu() for k, v in self.shadow.items()}  # Save on CPU for portability
+
     def load_state_dict(self, state_dict):
-        """
-        Loads EMA weights from a state dict. Keys must match model param names.
-        """
         missing = []
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 if name in state_dict:
-                    self.shadow[name] = state_dict[name].clone()
+                    self.shadow[name] = state_dict[name].clone().to(param.device)
                 else:
                     missing.append(name)
         if missing:
             print(f"[EMAModel] Warning: Missing EMA weights for {len(missing)} parameters.")
+

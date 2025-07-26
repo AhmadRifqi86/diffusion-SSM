@@ -7,68 +7,69 @@ Model:
     d_conv: 4
     expands: 2
   Unet:
+    model_channels: 160
     dropout: 0.1
     time_dim: 160
   Diffuser:
-    clip_model_name: "openai/clip-vit-large-patch14"
-    vae_model_name: "stabilityai/sd-vae-ft-ema"
+    clip_model_name: "openai/clip-vit-base-patch32"
+    vae_model_name: "stabilityai/sd-vae-ft-mse"
     train_timesteps: 1000
 
 Optimizer:  #seems adamW config still kinda wrong, 
   Adamw:
-    base_lr: 1e-4
+    base_lr: 5e-5
     init_lr: 1e-6
     weight_decay: 0.01
     warmup_ratio: 0.05
   Autocast: true
   ParamGroups:
     mamba_block:
-      lr: 1e-4
+      lr_scale: 1.5
       weight_decay: 0.01
     CrossAttention:
-      lr: 5e-5
+      lr_scale: 1.3
       weight_decay: 0.01
     time_embed:
-      lr: 1e-4
-      weight_decay: 0.0
+      lr_scale: 2.0
+      weight_decay: 0.005
     scale_shift:
-      lr: 1e-4
-      weight_decay: 0.0
+      lr_scale: 2.0
+      weight_decay: 0.005
     vae_proj:
-      lr: 5e-5
-      weight_decay: 0.0
+      lr_scale: 1.0
+      weight_decay: 0.005
     context_proj:
-      lr: 5e-5
-      weight_decay: 0.0
+      lr_scale: 1.0
+      weight_decay: 0.005
 
 Scheduler:
   sequence:
     - name: LinearLR
       end_factor: 1.0
       total_iters: 500
-    - name: CosineAnnealingWarmRestarts
+    - name: CosineAnnealingWarmRestartsWithDecay
       T_0: 1000
-      T_mult: 2
-      eta_min: 1e-6
       freq_mult: 0.9
+      eta_min: 1e-6
       total_iters: 2000   # Used for milestone only
 
 Train:
   use_v_parameterization: true
   batch_size: 4
   num_epochs: 200
+  num_workers: 2
   Dataset:
     img_size: 256
-    train_dataset: "dataset/train"
-    val_dataset: "dataset/val"
-    train_annotation: "dataset/test"
-    val_annotation: "dataset/test"
-    train_subset: 10000
-    val_subset: 500
+    train_dataset: "/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/train2017"
+    val_dataset: "/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/val2017"
+    train_annotations: "/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_train2017.json"
+    val_annotations: "/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json"
+    train_subset: 100
+    val_subset: 20
   Checkpoint:
     enabled: true
     checkpoint_dir: "checkpoints_cosineDecay"
-    checkpoint_path: null  # or "checkpoints/last.pt"
+    checkpoint_path: "checkpoints_cosineDecay/cp_epoch6.pt"  # null  # or "checkpoints/last.pt"
   EarlyStopping:
     patience: 10
     min_progress: 0.001

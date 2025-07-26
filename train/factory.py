@@ -12,6 +12,7 @@ from omegaconf import OmegaConf
 class OptimizerSchedulerFactory:
     @staticmethod
     def load_config(config):
+        #print(f"🔍 Loading configuration from: {config}")
         if isinstance(config, str) and (config.endswith(".yaml") or config.endswith(".yml")):
             if not os.path.exists(config):
                 raise FileNotFoundError(f"YAML config file not found: {config}")
@@ -25,12 +26,12 @@ class OptimizerSchedulerFactory:
     @staticmethod
     def create_model(config):
         config = OptimizerSchedulerFactory.load_config(config)
-        return UShapeMambaDiffusion(config)
+        return UShapeMambaDiffusion(config).to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
 
     @staticmethod
     def create_advanced_optimizer(model, config):
-        config = OptimizerSchedulerFactory.load_config(config)
-        base_lr = config['Optimizer']['Adamw']['base_lr']
+        #config = OptimizerSchedulerFactory.load_config(config)
+        base_lr = config['Optimizer']['Adamw']['base_lr'] #change this line later in case im using other optimizer
         param_groups = []
         used = set()
 
@@ -71,7 +72,7 @@ class OptimizerSchedulerFactory:
 
     @staticmethod
     def create_advanced_scheduler(optimizer, config):
-        config = OptimizerSchedulerFactory.load_config(config)
+        #config = OptimizerSchedulerFactory.load_config(config)
         sequence = config['Scheduler'].get('sequence', [])
         if not sequence:
             raise ValueError("Scheduler sequence is not defined in config.")
@@ -84,11 +85,11 @@ class OptimizerSchedulerFactory:
             name = sched_cfg['name']
             sched_kwargs = {k: v for k, v in sched_cfg.items() if k != 'name'}
 
-            scheduler_cls = getattr(torch.optim.lr_scheduler, name, None)
+            scheduler_cls = globals().get(name, None)
             if scheduler_cls is None:
-                scheduler_cls = globals().get(name, None)
-            if scheduler_cls is None:
-                raise ValueError(f"Unknown scheduler class: {name}")
+                scheduler_cls = getattr(torch.optim.lr_scheduler, os.name, None)
+                if scheduler_cls is None:
+                    raise ValueError(f"Unknown scheduler class: {name}")
 
             total_iters = sched_kwargs.get('total_iters', None)
             constructor_args = inspect.signature(scheduler_cls.__init__).parameters

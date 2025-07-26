@@ -136,10 +136,9 @@ class UShapeMambaDiffusion(nn.Module):
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # Load pre-trained VAE
-        self.vae = AutoencoderKL.from_pretrained(config.Diffuser.vae_model_name, torch_dtype=torch.float16).to(self.device)
-        
-        # Load Hugging Face CLIP encoder (only option now)
         print(f"Loading Hugging Face CLIP: {config.Model.Diffuser.clip_model_name}")
+        print(f"Loading pre-trained VAE: {config.Model.Diffuser.vae_model_name}")
+        self.vae = AutoencoderKL.from_pretrained(config.Model.Diffuser.vae_model_name, torch_dtype=torch.float16).to(self.device)
         self.clip_text_encoder = CLIPTextModel.from_pretrained(config.Model.Diffuser.clip_model_name)
         self.clip_tokenizer = CLIPTokenizer.from_pretrained(config.Model.Diffuser.clip_model_name)
         context_dim = self.clip_text_encoder.config.hidden_size
@@ -156,7 +155,7 @@ class UShapeMambaDiffusion(nn.Module):
             time_embed_dim=config.Model.Unet.time_dim)
         
         # Noise scheduler
-        self.noise_scheduler = NoiseScheduler(config.Model.Diffuser.num_train_timesteps).to(self.device)
+        self.noise_scheduler = NoiseScheduler(config.Model.Diffuser.train_timesteps).to(self.device)
         
         # Freeze pre-trained components
         for param in self.vae.parameters():
