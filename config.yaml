@@ -15,12 +15,12 @@ Model:
     vae_model_name: "stabilityai/sd-vae-ft-mse"
     train_timesteps: 1000
 
-Optimizer:  #seems adamW config still kinda wrong, 
+Optimizer:  #seems adamW config still kinda wrong,
+  init_lr: 1e-6
+  warmup_ratio: 0.05
   Adamw:
     base_lr: 5e-5
-    init_lr: 1e-6
     weight_decay: 0.01
-    warmup_ratio: 0.05
   Autocast: true
   ParamGroups:
     mamba_block:

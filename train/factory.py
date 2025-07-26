@@ -1,4 +1,5 @@
 import torch
+import torch.optim as optim
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LinearLR, SequentialLR
 import torch.optim.lr_scheduler as torch_sched
@@ -8,6 +9,16 @@ from train.custom import CosineAnnealingWarmRestartsWithDecay
 from models.diffuse import UShapeMambaDiffusion
 import os
 from omegaconf import OmegaConf
+
+
+OPTIMIZER_REGISTRY = {
+    "adamw": optim.AdamW,
+    "adam": optim.Adam,
+    "sgd": optim.SGD,
+    "rmsprop": optim.RMSprop,
+    "adagrad": optim.Adagrad,
+    # Add more as needed
+}
 
 class OptimizerSchedulerFactory:
     @staticmethod
@@ -30,13 +41,18 @@ class OptimizerSchedulerFactory:
 
     @staticmethod
     def create_advanced_optimizer(model, config):
-        #config = OptimizerSchedulerFactory.load_config(config)
-        base_lr = config['Optimizer']['Adamw']['base_lr'] #change this line later in case im using other optimizer
-        print(f"optimizer base_lr: {base_lr:.2e}")
+        opt_cfg = config['Optimizer']
+        opt_name = opt_cfg.get('name', 'adamw').lower()
+        opt_params = opt_cfg.get(opt_name.capitalize(), {})  # e.g., 'Adamw'
+
+        base_lr = opt_params.get('base_lr', 1e-4)
+        weight_decay = opt_params.get('weight_decay', 0.01)
+        print(f"Using optimizer: {opt_name.upper()}, base_lr: {base_lr:.2e}")
+
         param_groups = []
         used = set()
 
-        def add_group(name, params, lr_mult=1.0, wd=0.01):
+        def add_group(name, params, lr_mult=1.0, wd=weight_decay):
             filtered = [p for p in params if p.requires_grad and id(p) not in used]
             for p in filtered:
                 used.add(id(p))
@@ -49,29 +65,36 @@ class OptimizerSchedulerFactory:
                 })
 
         # Custom param groups
-        for key, cfg in config['Optimizer']['ParamGroups'].items():
-            lr_mult = cfg.get('lr_scale', 1.0)
-            wd = cfg.get('weight_decay', 0.01)
+        for key, group_cfg in opt_cfg.get('ParamGroups', {}).items():
+            lr_mult = group_cfg.get('lr_scale', 1.0)
+            wd = group_cfg.get('weight_decay', weight_decay)
             for name, module in model.named_modules():
                 if key in name or module.__class__.__name__ == key:
                     add_group(name, module.parameters(), lr_mult=lr_mult, wd=wd)
                     break
 
-        # Optional unet group
+        # Optional unet grouping
         if hasattr(model, 'unet'):
             for i, block in enumerate(model.unet.down_blocks):
-                add_group(f"unet.down_blocks.{i}", block.parameters(), lr_mult=(0.95 ** i), wd=0.01)
+                add_group(f"unet.down_blocks.{i}", block.parameters(), lr_mult=(0.95 ** i))
             for i, block in enumerate(model.unet.up_blocks):
-                add_group(f"unet.up_blocks.{i}", block.parameters(), lr_mult=(0.95 ** i), wd=0.01)
-            add_group("unet.middle_block", model.unet.middle_block.parameters(), lr_mult=0.7, wd=0.01)
+                add_group(f"unet.up_blocks.{i}", block.parameters(), lr_mult=(0.95 ** i))
+            add_group("unet.middle_block", model.unet.middle_block.parameters(), lr_mult=0.7)
 
         # Catch-all fallback
         remaining = [p for p in model.parameters() if p.requires_grad and id(p) not in used]
         if remaining:
-            param_groups.append({'params': remaining, 'lr': base_lr, 'weight_decay': 0.01})
+            param_groups.append({'params': remaining, 'lr': base_lr, 'weight_decay': weight_decay, 'name': 'default'})
 
-        return AdamW(param_groups, betas=(0.9, 0.999), eps=1e-8)
+        # Instantiate optimizer from registry
+        optimizer_cls = OPTIMIZER_REGISTRY.get(opt_name)
+        if optimizer_cls is None:
+            raise ValueError(f"Unsupported optimizer: {opt_name}")
 
+        # Filter allowed args to avoid unexpected kwargs
+        kwargs = {k: v for k, v in opt_params.items() if k not in ['base_lr', 'weight_decay']}
+        return optimizer_cls(param_groups, **kwargs)
+    
     @staticmethod
     def create_advanced_scheduler(optimizer, config):
         #config = OptimizerSchedulerFactory.load_config(config)
@@ -108,7 +131,7 @@ class OptimizerSchedulerFactory:
 
             if 'start_factor' in constructor_args and 'start_factor' not in sched_kwargs:
                 base_lr = config['Optimizer']['Adamw']['base_lr']
-                init_lr = config['Optimizer']['Adamw'].get('init_lr', base_lr * 0.01)
+                init_lr = config['Optimizer'].get('init_lr', base_lr * 0.01)
                 sched_kwargs['start_factor'] = init_lr / base_lr    
 
             if total_iters is not None and i < len(sequence) - 1:
@@ -123,4 +146,5 @@ class OptimizerSchedulerFactory:
             schedulers=schedulers,
             milestones=milestones
         )
+
 
