@@ -2,10 +2,11 @@ Model:
   CrossAttention:
     heads: 8
     dim_head: 64
-  Mamba:
+  Mamba: #add dt_rank and increase d_state
     d_state: 16
     d_conv: 4
     expands: 2
+    dt_rank: 2 
   Unet:
     model_channels: 160
     dropout: 0.1
@@ -18,11 +19,12 @@ Model:
 Optimizer:  #seems adamW config still kinda wrong,
   init_lr: 1e-6
   warmup_ratio: 0.05
-  Adamw:
-    base_lr: 3e-5  #might change to 2e-5
+  grad_acc: 1  #gradient accumulation steps, set to 1 if not using grad_acc
+  Adamw:  #add beta_1 and beta_2
+    base_lr: 2.5e-5  #might change to 1e-5
     weight_decay: 0.01
   Autocast: true
-  ParamGroups:
+  ParamGroups:  #change the lr_scale and weight_decay to match the model
     mamba_block:
       lr_scale: 1.5
       weight_decay: 0.01
@@ -46,13 +48,14 @@ Scheduler:
   sequence:
     - name: LinearLR
       end_factor: 1.0
-      total_iters: 2500 #25000 
+      total_iters: 2500 #25000 #in steps, not epochs, maybe calculated based on warmup_ratio
     - name: CosineAnnealingWarmRestartsWithDecay   #match exact class name
-      T_0: 5000 #50000  #number of step before first restart, train_subset size * num_epochs / batch_size
+      T_0: 5000 #50000  #number of step before first restart, train_subset size * num_epochs / batch_size * grad_acc, set equal to 20 epoch, maybe change to 30 epoch initial
       freq_mult: 1.3  #frequency multiplier for subsequent restarts
       eta_min: 1e-6  #minimum learning rate
       total_iters: 50000 #500000   # Used for milestone only
 
+#Kalo pake gradient accumulation, be careful with total_iters setting
 Train:
   use_v_parameterization: true
   batch_size: 4
@@ -69,7 +72,8 @@ Train:
   Checkpoint:
     enabled: true #false  #true
     checkpoint_dir: "cp_advancedTrain"  # or "checkpoints_cosineAnneal" or "checkpoints_cosineDecay"
-    checkpoint_path: "cp_advancedTrain/cp_epoch3.pt"  # null  # or "checkpoints/last.pt"
+    checkpoint_path: null #"cp_advancedTrain/cp_epoch3.pt"  # null  # or "checkpoints/last.pt"
+    best_checkpoint_path: "cp_advancedTrain/best_checkpoint_test.pt"  # "checkpoints/best.pt"
   EarlyStopping:
     patience: 10   #in epochs
     min_progress: 0.001

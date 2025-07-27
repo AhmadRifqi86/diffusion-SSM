@@ -213,6 +213,7 @@ class ScaleShift(nn.Module):
     def forward(self, x, context, timestep_emb):
         # Always use both context and timestep
         timestep_emb_proj = self.timestep_proj(timestep_emb)
+        #print("Context shape:", context.shape, "Timestep embedding shape:", timestep_emb_proj.shape)
         cond = torch.cat([context, timestep_emb_proj], dim=-1)
         scale_shift = self.to_scale_shift(cond)
 
@@ -230,7 +231,7 @@ class ScaleShift(nn.Module):
 
         return x * (scale + 1) + shift
 
-class MainBlockSerial(nn.Module):
+class MainBlockSerial(nn.Module): #add dt_rank, 
     def __init__(self, dim, context_dim, time_dim=160, heads=8, dim_head=64, d_state=16, d_conv=4, expands=2):
         super().__init__()
         self.dim = dim

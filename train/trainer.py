@@ -23,7 +23,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         self.use_v_param = config.Train.use_v_parameterization
         self.criterion = MinSNRVLoss(gamma=5.0)
         self.ema_model = EMAModel(model, decay=0.9999)
-
+        self.gradient_accumulation_steps = config.Optimizer.get('grad_acc', 1)  # Default to 1 if not set
         # Multi-component optimizer
         self.early_stop = EarlyStopping(patience=20, min_delta=1e-4, restore_best_weights=True)
         
@@ -92,8 +92,8 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         print(f"✅ Resumed training from {checkpoint_path} at epoch {self.start_epoch}, last loss: {self.best_loss:.4f}")
         return checkpoint
 
-    def training_step(self, batch): #perlu ditest: checkpointing dengan best_val_loss setelah resume
-        """Single training step with autocast, EMA, Min-SNR, grad clipping"""
+    def training_step(self, batch):
+        """Cleaner version with gradient accumulation"""
         images, text_prompts = batch
         timesteps = torch.randint(
             0, self.model.noise_scheduler.num_train_timesteps,
@@ -101,47 +101,71 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         )
         images = images.to(next(self.model.parameters()).device)
         timesteps = timesteps.to(next(self.model.parameters()).device)
-
+        
+        # Track accumulation steps
+        if not hasattr(self, '_accum_count'):
+            self._accum_count = 0
+        
         with autocast(device_type="cuda"):
             predicted_noise, noise, latents = self.model(images, timesteps, text_prompts)
             target = self.model.noise_scheduler.get_v_target(latents, noise, timesteps) if self.use_v_param else noise
-            # Ensure timesteps are on the same device as snr, kode nya bloated apa karena loss juga ya? 
-            # snr = self.model.noise_scheduler.snr[timesteps.to(self.model.noise_scheduler.snr.device)].to(images.device)
-            # loss = self.criterion(predicted_noise, target, timesteps, snr)
+            
+            predicted_noise = predicted_noise.float()
+            target = target.float()
+            snr = self.model.noise_scheduler.snr[timesteps.to(self.model.noise_scheduler.snr.device)].to(images.device).float()
+            loss = self.criterion(predicted_noise, target, timesteps, snr)
+            
+            # Normalize loss
+            loss = loss / self.gradient_accumulation_steps
         
-        predicted_noise = predicted_noise.float()
-        target = target.float()
-        snr = self.model.noise_scheduler.snr[timesteps.to(self.model.noise_scheduler.snr.device)].to(images.device).float()
-        loss = self.criterion(predicted_noise, target, timesteps, snr)
-
-        self.optimizer.zero_grad()
+        # Backward pass
         self.scaler.scale(loss).backward()
-        grad_norm = self.grad_clipper.clip_gradients(self.model)
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
-        self.ema_model.update()
-        self.scheduler.step()
-
-        self.loss_history.append(loss.item())
-        self.learning_rates.append(self.optimizer.param_groups[0]['lr'])
-
+        self._accum_count += 1
+        
+        # Default values
+        grad_norm = 0.0
+        is_update_step = False
+        
+        # Optimizer step when accumulation is complete
+        if self._accum_count >= self.gradient_accumulation_steps:
+            grad_norm = self.grad_clipper.clip_gradients(self.model)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.optimizer.zero_grad()
+            
+            # Update EMA and scheduler
+            self.ema_model.update()
+            self.scheduler.step()
+            
+            # Reset counter
+            self._accum_count = 0
+            is_update_step = True
+        
+        # Logging (always log actual loss)
+        actual_loss = loss.item() * self.gradient_accumulation_steps
+        self.loss_history.append(actual_loss)
+        if is_update_step:
+            self.learning_rates.append(self.optimizer.param_groups[0]['lr'])
+        
         return {
-            'loss': loss.item(),
-            'grad_norm': grad_norm.item(),
-            'lr': self.optimizer.param_groups[0]['lr']
+            'loss': actual_loss,
+            'grad_norm': grad_norm.item() if hasattr(grad_norm, 'item') else grad_norm,
+            'lr': self.optimizer.param_groups[0]['lr'],
+            'optimizer_step': is_update_step
         }
 
     def validate(self, val_loader, epoch, train_indices=None, val_indices=None):
-        """Validation loop for one epoch"""
+        """Validation loop for one epoch."""
         self.ema_model.apply_shadow()  # <<< Use EMA weights
         self.model.eval()
         total_val_loss = 0
         num_batches = 0
 
+        device = next(self.model.parameters()).device
+
         with torch.no_grad():
-            for batch in tqdm(val_loader, desc="Validating"):
+            for batch in tqdm(val_loader, desc=f"Validating (Epoch {epoch})"):
                 images, text_prompts = batch
-                device = next(self.model.parameters()).device
                 images = images.to(device)
 
                 timesteps = torch.randint(
@@ -162,21 +186,49 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
 
                 total_val_loss += loss.item()
                 num_batches += 1
+            # === Inference Sample ===
+            try:
+                sample_image = images[0].unsqueeze(0)  # [1, C, H, W]
+                sample_prompt = text_prompts[0]
 
+                sampled = self.model.sample(
+                    sample_prompt,
+                    num_inference_steps=50,
+                    guidance_scale=5.0
+                )  # shape: [1, C, H, W], assumed in [0, 1]
+
+                import matplotlib.pyplot as plt
+                import torchvision.transforms.functional as TF
+
+                # Detach, move to CPU, convert to numpy
+                img_tensor = sampled.squeeze(0).detach().cpu()
+                img_np = TF.to_pil_image(img_tensor)
+
+                # Display image
+                plt.figure(figsize=(4, 4))
+                plt.imshow(img_np)
+                plt.axis('off')
+                plt.title(f"Epoch {epoch} Prompt: {sample_prompt}")
+                plt.show()
+            except Exception as e:
+                import traceback
+                print(f"⚠️  Failed to generate/display sample image during validation: {e}")
+                traceback.print_exc()
+        # === End Inference Sample ===
         avg_val_loss = total_val_loss / max(1, num_batches)
         self.val_loss_history.append(avg_val_loss)
 
         if avg_val_loss < self.best_loss:
             self.best_loss = avg_val_loss
             if self.config.Train.Checkpoint.enabled:
-                best_cp_path = os.path.join(self.checkpoint_dir, "best_model.pt")
+                best_cp_path = os.path.join(self.checkpoint_dir, self.config.Train.Checkpoint.best_checkpoint_path)
                 self.checkpoint(best_cp_path, epoch, avg_val_loss, train_indices, val_indices)
                 print(f"🌟 Best model saved to {best_cp_path}")
 
         self.model.train()
         self.ema_model.restore()  # <<< Restore raw model weights
         return avg_val_loss
-    
+
     def train(self, config, val_loader=None):
         device = next(self.model.parameters()).device
         #best_val_loss = self.best_loss

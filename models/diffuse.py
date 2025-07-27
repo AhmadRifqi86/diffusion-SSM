@@ -238,55 +238,101 @@ class UShapeMambaDiffusion(nn.Module):
         predicted_noise = self.unet(noisy_latents, timesteps, context)
         
         return predicted_noise, noise, latents
-    
-    def sample(self, text_prompts, num_inference_steps=50, guidance_scale=7.5, height=512, width=512):
-        """Sample images from text prompts using DDPM sampling with CFG"""
-        batch_size = len(text_prompts)
+
+    def sample(self, prompt, negative_prompt="", height=512, width=512, 
+           num_inference_steps=50, guidance_scale=7.5, eta=0.0, generator=None):
+        """
+        Sample images using CFG + DDIM sampling
         
-        # Encode text (conditional)
-        text_embeddings = self.encode_text(text_prompts)
+        Args:
+            prompt (str or list): Text prompt(s) for generation
+            negative_prompt (str or list): Negative prompt(s) for CFG
+            height (int): Image height in pixels
+            width (int): Image width in pixels  
+            num_inference_steps (int): Number of denoising steps
+            guidance_scale (float): CFG guidance scale (1.0 = no guidance)
+            eta (float): DDIM eta parameter (0.0 = deterministic)
+            generator: Random generator for reproducibility
         
-        # Encode unconditional context (empty strings)
-        uncond_embeddings = self.encode_text(
-            [""] * batch_size, 
-            max_length=text_embeddings.shape[1], 
-            padding='max_length'
+        Returns:
+            torch.Tensor: Generated images in pixel space
+        """
+        # Handle batch prompts
+        if isinstance(prompt, str):
+            prompt = [prompt]
+        if isinstance(negative_prompt, str):
+            negative_prompt = [negative_prompt] * len(prompt)
+        
+        batch_size = len(prompt)
+        
+        # Calculate latent dimensions
+        latent_height = height // 8  # VAE downsamples by 8x
+        latent_width = width // 8
+        latent_channels = self.vae.config.latent_channels
+        
+        # Create timestep schedule
+        timesteps = self._create_inference_schedule(num_inference_steps)
+        
+        # Initialize random latents
+        latents = torch.randn(
+            (batch_size, latent_channels, latent_height, latent_width),
+            generator=generator,
+            device=self.device,
+            dtype=next(self.unet.parameters()).dtype
         )
         
-        # Create latent shape
-        latent_height = height // 8
-        latent_width = width // 8
-        latent_shape = (batch_size, self.vae.config.latent_channels, latent_height, latent_width)
+        # Encode prompts for CFG
+        if guidance_scale > 1.0:
+            # Conditional embeddings
+            text_embeddings = self.encode_text(prompt)   
+            # Unconditional embeddings  
+            uncond_embeddings = self.encode_text(negative_prompt)          
+            # Concatenate for batch processing
+            text_embeddings = torch.cat([uncond_embeddings, text_embeddings])           
+            # Duplicate latents for CFG
+            latents = torch.cat([latents] * 2)
+        else:
+            # No CFG - just conditional
+            text_embeddings = self.encode_text(prompt)
         
-        # Initialize random noise on correct device
-        latents = torch.randn(latent_shape, device=self.device)
-        
-        # DDPM sampling timesteps
-        timesteps = torch.linspace(
-            self.noise_scheduler.num_train_timesteps - 1, 
-            0, 
-            num_inference_steps
-        ).long().to(self.device)
-
-        for t in timesteps:
-            timesteps_batch = torch.full((batch_size,), t, device=self.device)
+        # Denoising loop
+        for i, t in enumerate(timesteps):
+            # Expand timestep for batch
+            print(f"latents shape: {latents.shape}, t_shape: {t_batch.shape}, context_shape: {text_embeddings.shape} ")
+            t_batch = torch.full((latents.shape[0],), t, device=self.device, dtype=torch.long)
             
-            # Efficient batch processing for CFG
-            context = torch.cat([uncond_embeddings, text_embeddings], dim=0)
-            latents_input = torch.cat([latents, latents], dim=0)
-            timesteps_input = torch.cat([timesteps_batch, timesteps_batch], dim=0)
-
+            # Predict noise
             with torch.no_grad():
-                noise_pred = self.unet(latents_input, timesteps_input, context)
-                noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2, dim=0)
-                
-                # CFG interpolation
-                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+                noise_pred = self.unet(latents, t_batch, text_embeddings)
             
-            # Denoising step
-            latents = self.noise_scheduler.step_ddim(noise_pred, timesteps_batch, latents)
+            # Apply CFG
+            if guidance_scale > 1.0:
+                noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
+                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+                # Use only conditional latents for next step
+                latents = latents.chunk(2)[1]
+            
+            # DDIM step
+            latents = self.noise_scheduler.step_ddim(
+                noise_pred, t, latents, eta=eta, generator=generator
+            )
+            
+            # Re-duplicate for next CFG step (except last iteration)
+            if guidance_scale > 1.0 and i < len(timesteps) - 1:
+                latents = torch.cat([latents] * 2)
         
-        # Decode to images
+        # Decode latents to images
         images = self.decode_latents(latents)
         
+        # Convert to [0, 1] range
+        images = (images + 1.0) / 2.0
+        images = torch.clamp(images, 0.0, 1.0)
+        
         return images
+
+    def _create_inference_schedule(self, num_inference_steps):
+        """Create timestep schedule for inference"""
+        step_ratio = self.noise_scheduler.num_train_timesteps // num_inference_steps
+        timesteps = (torch.arange(0, num_inference_steps) * step_ratio).round().long()
+        timesteps = torch.flip(timesteps, dims=[0])  # Reverse for denoising
+        return timesteps.to(self.device)
