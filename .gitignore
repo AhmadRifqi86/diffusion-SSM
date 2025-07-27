@@ -176,11 +176,13 @@ tmp.py
 ssm_triton.py
 TODO.md
 Explain.md
+question.md
 *.png
 *.jpg
 checkpoints_phasesched/
 checkpoints_cosineAnneal/
 checkpoints_cosineDecay/
 backup/
+cp_advancedTrain/
 
 # End of https://www.toptal.com/developers/gitignore/api/python

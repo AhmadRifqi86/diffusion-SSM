@@ -196,54 +196,50 @@ class CrossAttention(nn.Module): #maybe put dropout here
         return self.to_out(out)  # [B, N, C]
 
 class ScaleShift(nn.Module):
-    """
-    Scale and Shift module for adaptive conditioning, now supports optional timestep embedding.
-    """
-    def __init__(self, dim, context_dim, timestep_emb_dim,use_zero_init=True):
+    def __init__(self, dim, context_dim, timestep_emb_dim, use_zero_init=True):
         super().__init__()
         self.timestep_proj = nn.Linear(timestep_emb_dim, context_dim)
+        
+        # Single pathway for combined conditioning
         self.to_scale_shift = nn.Sequential(
             nn.SiLU(),
-            nn.Linear(context_dim, dim * 2)
+            nn.Linear(context_dim * 2, dim * 2)  # Always expect concatenated input
         )
-        self.to_scale_shift_time = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(context_dim * 2, dim * 2)
-        )
+        
         if use_zero_init:
             nn.init.zeros_(self.to_scale_shift[-1].weight)
             nn.init.zeros_(self.to_scale_shift[-1].bias)
 
-    @print_forward_shapes
-    def forward(self, x, context, timestep_emb=None):
-        if timestep_emb is not None:
-            # Concatenate context and timestep embedding
-            timestep_emb_proj = self.timestep_proj(timestep_emb)
-            cond = torch.cat([context, timestep_emb_proj], dim=-1)
-            scale_shift = self.to_scale_shift_time(cond)
-        else:
-            scale_shift = self.to_scale_shift(context)
+    def forward(self, x, context, timestep_emb):
+        # Always use both context and timestep
+        timestep_emb_proj = self.timestep_proj(timestep_emb)
+        cond = torch.cat([context, timestep_emb_proj], dim=-1)
+        scale_shift = self.to_scale_shift(cond)
 
         scale, shift = scale_shift.chunk(2, dim=-1)
-        # Reshape for broadcasting over sequence or spatial dimensions
-        while scale.dim() < x.dim():
+        
+        # Proper broadcasting for different input dimensions
+        if x.dim() == 3:  # [B, N, C]
+            # scale and shift are [B, C], need [B, 1, C]
             scale = scale.unsqueeze(1)
             shift = shift.unsqueeze(1)
+        elif x.dim() == 4:  # [B, C, H, W] 
+            # scale and shift are [B, C], need [B, C, 1, 1]
+            scale = scale.unsqueeze(-1).unsqueeze(-1)
+            shift = shift.unsqueeze(-1).unsqueeze(-1)
 
         return x * (scale + 1) + shift
 
-class MainBlockSerial(nn.Module):  #Maybe put dropout here
-    """
-    Main block implementing the architecture from the second image, now supports optional timestep embedding.
-    Uses official Mamba if available, otherwise falls back to MambaBlock.
-    """
-    def __init__(self, dim, context_dim, time_dim=160,heads=8, dim_head=64, d_state=16, d_conv=4, expands=2): #butuh pass config
+class MainBlockSerial(nn.Module):
+    def __init__(self, dim, context_dim, time_dim=160, heads=8, dim_head=64, d_state=16, d_conv=4, expands=2):
         super().__init__()
         self.dim = dim
         self.cross_attn = CrossAttention(dim, context_dim, heads, dim_head)
-        self.scale_shift_1 = ScaleShift(dim, context_dim,time_dim)
+        self.scale_shift_1 = ScaleShift(dim, context_dim, time_dim)
         self.norm_1 = nn.RMSNorm(dim)
-        if MAMBA_AVAILABLE:
+        
+        # Mamba block selection (assuming MAMBA_AVAILABLE is defined elsewhere)
+        if 'MAMBA_AVAILABLE' in globals() and MAMBA_AVAILABLE:
             self.mamba_block = Mamba(
                 d_model=dim,
                 d_state=d_state,
@@ -251,27 +247,36 @@ class MainBlockSerial(nn.Module):  #Maybe put dropout here
                 expand=expands,
             )
         else:
+            # Fallback implementation would be defined elsewhere
             self.mamba_block = MambaBlock(dim, d_state, d_conv, expands)
+            
         self.scale_shift_2 = ScaleShift(dim, context_dim, time_dim)
         self.norm_2 = nn.RMSNorm(dim)
         self.scale_1 = nn.Parameter(torch.ones(1))
         self.scale_2 = nn.Parameter(torch.ones(1))
-        self.dropout = nn.Dropout(p = 0.05)
-        self.dropout_2 = nn.Dropout(p = 0.1)  # Optional dropout after Mamba block
+        self.dropout = nn.Dropout(p=0.05)
+        self.dropout_2 = nn.Dropout(p=0.1)
         
-    #@print_forward_shapes
     def forward(self, x, context, timestep_emb):
+        # Ensure context has proper shape for mean operation
+        if context.dim() == 2:
+            context_mean = context  # Already [B, C]
+        else:
+            context_mean = context.mean(dim=1)  # [B, seq, C] -> [B, C]
+        
+        # First path: Mamba -> Scale/Shift -> Norm -> Residual
         residual_1 = x
-
         x_mamba = self.dropout(self.mamba_block(x))
-        x_mamba = self.scale_shift_1(x_mamba, context.mean(dim=1), timestep_emb)
+        x_mamba = self.scale_shift_1(x_mamba, context_mean, timestep_emb)
         x_mamba = self.norm_1(x_mamba)
         attn_inp = x_mamba * self.scale_1 + residual_1
 
+        # Second path: Cross-Attention -> Scale/Shift -> Norm -> Residual  
         x_attn = self.cross_attn(attn_inp, context)
-        x_attn = self.scale_shift_2(x_attn, context.mean(dim=1), timestep_emb) #RMSNorm after dropout?
+        x_attn = self.scale_shift_2(x_attn, context_mean, timestep_emb)
         x_attn = self.norm_2(self.dropout_2(x_attn))
         output = x_attn * self.scale_2 + attn_inp
+        
         return output
 
 

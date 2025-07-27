@@ -46,12 +46,12 @@ Scheduler:
   sequence:
     - name: LinearLR
       end_factor: 1.0
-      total_iters: 250 
+      total_iters: 1250 #25000 
     - name: CosineAnnealingWarmRestartsWithDecay   #match exact class name
-      T_0: 500  #number of step before first restart
+      T_0: 2500 #50000  #number of step before first restart, train_subset size * num_epochs / batch_size
       freq_mult: 0.9  #frequency multiplier for subsequent restarts
       eta_min: 1e-6  #minimum learning rate
-      total_iters: 2000   # Used for milestone only
+      total_iters: 25000 #500000   # Used for milestone only
 
 Train:
   use_v_parameterization: true
@@ -64,12 +64,12 @@ Train:
     val_dataset: "/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/val2017"
     train_annotations: "/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_train2017.json"
     val_annotations: "/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json"
-    train_subset: 100
-    val_subset: 20
+    train_subset: 500 #10000
+    val_subset: 20 #500
   Checkpoint:
-    enabled: false
-    checkpoint_dir: "checkpoints_cosineDecay"
-    checkpoint_path: "checkpoints_cosineDecay/cp_epoch6.pt"  # null  # or "checkpoints/last.pt"
+    enabled: true #false  #true
+    checkpoint_dir: "cp_advancedTrain"  # or "checkpoints_cosineAnneal" or "checkpoints_cosineDecay"
+    checkpoint_path: "cp_advancedTrain/cp_epoch13.pt"  # null  # or "checkpoints/last.pt"
   EarlyStopping:
     patience: 10   #in epochs
     min_progress: 0.001

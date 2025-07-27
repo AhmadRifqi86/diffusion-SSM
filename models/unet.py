@@ -106,34 +106,46 @@ class UpBlock(nn.Module):
         self.from_main_block = nn.Linear(out_channels, out_channels)
         
     #@print_forward_shapes
-    def forward(self, x, skip, t, context=None):
-        # Process time embedding - consistent with DownBlock and MiddleBlock
-        #time_emb = self.time_mlp(t)
+class UpBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, skip_channels, time_dim, context_dim, config):
+        super().__init__()
 
+        self.upsample = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1)
+        self.conv1 = nn.Conv2d(out_channels + skip_channels, out_channels, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+
+        self.norm1 = AdaptiveGroupNorm(8, out_channels, time_dim)
+        self.norm2 = AdaptiveGroupNorm(8, out_channels, time_dim)
+        
+        # Main block processing - consistent with DownBlock and MiddleBlock
+        self.to_main_block = nn.Linear(out_channels, out_channels)
+        self.main_block = MainBlockSerial(out_channels, context_dim, time_dim,
+                                          heads = config.Model.CrossAttention.heads, dim_head=config.Model.CrossAttention.dim_head, 
+                                          d_state=config.Model.Mamba.d_state, d_conv=config.Model.Mamba.d_conv, 
+                                          expands=config.Model.Mamba.expands)
+        self.from_main_block = nn.Linear(out_channels, out_channels)
+        
+    def forward(self, x, skip, t, context=None):
         x = self.upsample(x)
         x = torch.cat([x, skip], dim=1)
         x = self.conv1(x)
-        x = self.norm1(x,t)
+        x = self.norm1(x, t)
         x = F.silu(x)
         
         x = self.conv2(x)
-        x = self.norm2(x,t)
+        x = self.norm2(x, t)
         x = F.silu(x)
         
         # Apply Main Block - consistent with DownBlock and MiddleBlock
         if context is not None:
-            #print("UpBlock Context shape: ", context.shape)
-            #print("UpBlock Time shape: ", t.shape) 
             B, C, H, W = x.shape
             x_flat = x.flatten(2).transpose(1, 2)
             x_flat = self.to_main_block(x_flat)
-            #print("x_flat shape: ", x_flat.shape)
             x_flat = self.main_block(x_flat, context, t)
             x_flat = self.from_main_block(x_flat)
             x = x_flat.transpose(1, 2).reshape(B, C, H, W)
         
         return x
-
 
 class MiddleBlock(nn.Module):
     def __init__(self, channels, time_dim, context_dim, config):
@@ -178,8 +190,8 @@ class MiddleBlock(nn.Module):
         return h
 
 
-class UShapeMamba(nn.Module): #butuh pass config
-    def __init__(self, config,in_channels=4,model_channels=160,time_embed_dim=160,context_dim=768):  # New parameter to control time embedding approach
+class UShapeMamba(nn.Module):
+    def __init__(self, config, in_channels=4, model_channels=160, time_embed_dim=160, context_dim=768):
         super().__init__()
 
         self.time_embed = nn.Sequential(
@@ -193,27 +205,31 @@ class UShapeMamba(nn.Module): #butuh pass config
         self.context_proj = nn.Linear(context_dim, context_dim)
         self.input_proj = nn.Conv2d(in_channels, model_channels, 3, padding=1)
         
+        # Down blocks
         self.down_blocks = nn.ModuleList()
         down_channels = []
         in_ch = model_channels
 
         for i in range(4):
-            out_ch = model_channels * (2 ** i)
+            out_ch = model_channels * (2 ** i)  # 160, 320, 640, 1280
             self.down_blocks.append(
                 DownBlock(in_ch, out_ch, time_embed_dim, context_dim, config)
             )
             down_channels.append(out_ch)
             in_ch = out_ch
 
+        # Middle block
         self.middle_block = MiddleBlock(in_ch, time_embed_dim, context_dim, config)
 
-        # Reverse for up path
+        # Up blocks - FIXED channel progression
         self.up_blocks = nn.ModuleList()
-        skip_channels = list(reversed(down_channels))
-        up_in_channels = in_ch
+        skip_channels = list(reversed(down_channels))  # [1280, 640, 320, 160]
+        up_in_channels = in_ch  # 1280
 
         for i, skip_ch in enumerate(skip_channels):
-            out_ch = model_channels * (2 ** (2 - i)) if i < 3 else model_channels
+            # Dynamically compute out_ch to mirror down path
+            out_ch = skip_channels[i + 1] if i < len(skip_channels) - 1 else model_channels
+
             self.up_blocks.append(
                 UpBlock(up_in_channels, out_ch, skip_ch, time_embed_dim, context_dim, config)
             )
@@ -221,9 +237,8 @@ class UShapeMamba(nn.Module): #butuh pass config
 
         self.output_proj = nn.Conv2d(model_channels, in_channels, 3, padding=1)
         
-    #@print_forward_shapes
     def forward(self, x, timesteps, context=None):
-        t = self.time_embed(timesteps)  # Shared approach: Use global time embedding
+        t = self.time_embed(timesteps)
         
         if context is not None:
             context = self.context_proj(context)
@@ -238,6 +253,7 @@ class UShapeMamba(nn.Module): #butuh pass config
             skip_connections.append(skip)
         
         h = self.middle_block(h, t, context)
+        
         for i, block in enumerate(self.up_blocks):
             skip = skip_connections[-(i + 1)]
             h = block(h, skip, t, context)
