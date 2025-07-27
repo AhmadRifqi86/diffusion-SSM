@@ -232,7 +232,7 @@ class ScaleShift(nn.Module):
         return x * (scale + 1) + shift
 
 class MainBlockSerial(nn.Module): #add dt_rank, 
-    def __init__(self, dim, context_dim, time_dim=160, heads=8, dim_head=64, d_state=16, d_conv=4, expands=2):
+    def __init__(self, dim, context_dim, time_dim=160, heads=8, dim_head=64, d_state=16, d_conv=4, expands=2, dt_rank="auto"):
         super().__init__()
         self.dim = dim
         self.cross_attn = CrossAttention(dim, context_dim, heads, dim_head)
@@ -246,6 +246,7 @@ class MainBlockSerial(nn.Module): #add dt_rank,
                 d_state=d_state,
                 d_conv=d_conv,
                 expand=expands,
+                dt_rank = dt_rank
             )
         else:
             # Fallback implementation would be defined elsewhere

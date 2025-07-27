@@ -37,6 +37,9 @@ def print_forward_shapes(forward_fn):
         return output
     return wrapper 
 
+def debug_log(message):
+    caller = inspect.stack()[1].function
+    print(f"[DEBUG] ({caller}) {message}")
 
 def log_learning_rate(scheduler):
     def wrapper(*args, **kwargs):

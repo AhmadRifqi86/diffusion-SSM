@@ -4,6 +4,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import LinearLR, SequentialLR
 import torch.optim.lr_scheduler as torch_sched
 import inspect
+from tools.debug import debug_log
 # Example: from your custom scheduler implementation
 from train.custom import CosineAnnealingWarmRestartsWithDecay
 from models.diffuse import UShapeMambaDiffusion
@@ -116,8 +117,9 @@ class OptimizerSchedulerFactory:
                 if scheduler_cls is None:
                     raise ValueError(f"Unknown scheduler class: {name}")
 
-            total_iters = sched_kwargs.get('total_iters', None)
+            total_iters = sched_kwargs.get('total_iters', None) #change this line
             constructor_args = inspect.signature(scheduler_cls.__init__).parameters
+            debug_log(f"scheduler_name: {name} has total_iters: {total_iters}")
 
             if total_iters is not None:
                 if 'total_iters' not in constructor_args:

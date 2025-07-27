@@ -102,7 +102,7 @@ class UpBlock(nn.Module):
         self.main_block = MainBlockSerial(out_channels, context_dim, time_dim,
                                           heads = config.Model.CrossAttention.heads, dim_head=config.Model.CrossAttention.dim_head, 
                                           d_state=config.Model.Mamba.d_state, d_conv=config.Model.Mamba.d_conv, 
-                                          expands=config.Model.Mamba.expands)
+                                          expands=config.Model.Mamba.expands, dt_rank=config.Model.Mamba.dt_rank)
         self.from_main_block = nn.Linear(out_channels, out_channels)
         
     #@print_forward_shapes
@@ -122,7 +122,7 @@ class UpBlock(nn.Module):
         self.main_block = MainBlockSerial(out_channels, context_dim, time_dim,
                                           heads = config.Model.CrossAttention.heads, dim_head=config.Model.CrossAttention.dim_head, 
                                           d_state=config.Model.Mamba.d_state, d_conv=config.Model.Mamba.d_conv, 
-                                          expands=config.Model.Mamba.expands)
+                                          expands=config.Model.Mamba.expands, dt_rank=config.Model.Mamba.dt_rank)
         self.from_main_block = nn.Linear(out_channels, out_channels)
         
     def forward(self, x, skip, t, context=None):
@@ -161,7 +161,7 @@ class MiddleBlock(nn.Module):
         self.main_block = MainBlockSerial(channels, context_dim, time_dim, 
                                           heads = config.Model.CrossAttention.heads, dim_head=config.Model.CrossAttention.dim_head, 
                                           d_state=config.Model.Mamba.d_state, d_conv=config.Model.Mamba.d_conv, 
-                                          expands=config.Model.Mamba.expands)
+                                          expands=config.Model.Mamba.expands, dt_rank=config.Model.Mamba.dt_rank)
         self.from_main_block = nn.Linear(channels, channels)
         
         

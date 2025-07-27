@@ -187,33 +187,36 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
                 total_val_loss += loss.item()
                 num_batches += 1
             # === Inference Sample ===
-            try:
-                sample_image = images[0].unsqueeze(0)  # [1, C, H, W]
-                sample_prompt = text_prompts[0]
+            if epoch % 10 == 0:
+                try:
+                    sample_image = images[0].unsqueeze(0)  # [1, C, H, W]
+                    sample_prompt = text_prompts[0]
 
-                sampled = self.model.sample(
-                    sample_prompt,
-                    num_inference_steps=50,
-                    guidance_scale=5.0
-                )  # shape: [1, C, H, W], assumed in [0, 1]
+                    sampled = self.model.sample(
+                        sample_prompt,
+                        height=self.config.Train.Dataset.img_size,
+                        width=self.config.Train.Dataset.img_size,
+                        num_inference_steps=self.config.Validate.denoise_step,
+                        guidance_scale=self.config.Validate.guidance_scale
+                    )  # shape: [1, C, H, W], assumed in [0, 1]
 
-                import matplotlib.pyplot as plt
-                import torchvision.transforms.functional as TF
+                    import matplotlib.pyplot as plt
+                    import torchvision.transforms.functional as TF
 
-                # Detach, move to CPU, convert to numpy
-                img_tensor = sampled.squeeze(0).detach().cpu()
-                img_np = TF.to_pil_image(img_tensor)
+                    # Detach, move to CPU, convert to numpy
+                    img_tensor = sampled.squeeze(0).detach().cpu()
+                    img_np = TF.to_pil_image(img_tensor)
 
-                # Display image
-                plt.figure(figsize=(4, 4))
-                plt.imshow(img_np)
-                plt.axis('off')
-                plt.title(f"Epoch {epoch} Prompt: {sample_prompt}")
-                plt.show()
-            except Exception as e:
-                import traceback
-                print(f"⚠️  Failed to generate/display sample image during validation: {e}")
-                traceback.print_exc()
+                    # Display image
+                    plt.figure(figsize=(4, 4))
+                    plt.imshow(img_np)
+                    plt.axis('off')
+                    plt.title(f"Epoch {epoch} Prompt: {sample_prompt}")
+                    plt.show()
+                except Exception as e:
+                    import traceback
+                    print(f"⚠️  Failed to generate/display sample image during validation: {e}")
+                    traceback.print_exc()
         # === End Inference Sample ===
         avg_val_loss = total_val_loss / max(1, num_batches)
         self.val_loss_history.append(avg_val_loss)

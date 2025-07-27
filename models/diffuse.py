@@ -201,20 +201,22 @@ class UShapeMambaDiffusion(nn.Module):
         """Encode text prompts using Hugging Face CLIP"""
         with torch.no_grad():
             tokenizer_kwargs = {
-                "padding": padding,
                 "truncation": True,
                 "return_tensors": "pt"
             }
+
             if max_length is not None:
                 tokenizer_kwargs["max_length"] = max_length
-                
+                tokenizer_kwargs["padding"] = "max_length"  # ✅ force fixed length padding
+            else:
+                tokenizer_kwargs["padding"] = padding  # fallback to whatever was passed (e.g., True)
+
             text_inputs = self.clip_tokenizer(text_prompts, **tokenizer_kwargs)
-            
-            # Move to correct device
-            text_inputs = {k: v.to(self.device) for k, v in text_inputs.items()}     
+            text_inputs = {k: v.to(self.device) for k, v in text_inputs.items()}
             text_features = self.clip_text_encoder(**text_inputs).last_hidden_state
 
         return text_features
+
     
     def forward(self, images, timesteps, text_prompts=None):
         """Forward pass for training - predicts noise"""
@@ -239,7 +241,7 @@ class UShapeMambaDiffusion(nn.Module):
         
         return predicted_noise, noise, latents
 
-    def sample(self, prompt, negative_prompt="", height=512, width=512, 
+    def sample(self, prompt, negative_prompt="", height=256, width=256, 
            num_inference_steps=50, guidance_scale=7.5, eta=0.0, generator=None):
         """
         Sample images using CFG + DDIM sampling
@@ -264,7 +266,7 @@ class UShapeMambaDiffusion(nn.Module):
             negative_prompt = [negative_prompt] * len(prompt)
         
         batch_size = len(prompt)
-        
+        #print("negative prompt len: ", len(negative_prompt))
         # Calculate latent dimensions
         latent_height = height // 8  # VAE downsamples by 8x
         latent_width = width // 8
@@ -283,12 +285,20 @@ class UShapeMambaDiffusion(nn.Module):
         
         # Encode prompts for CFG
         if guidance_scale > 1.0:
-            # Conditional embeddings
-            text_embeddings = self.encode_text(prompt)   
-            # Unconditional embeddings  
-            uncond_embeddings = self.encode_text(negative_prompt)          
+            # Tokenize both to get max length needed
+            prompt_tokens = self.clip_tokenizer(prompt, padding=True, truncation=True, return_tensors="pt")
+            print(f"len negative_prompt before tokenizer: {len(negative_prompt)}")
+            neg_tokens = self.clip_tokenizer(negative_prompt, padding=True, truncation=True, return_tensors="pt")
+            max_length = max(prompt_tokens.input_ids.shape[1], neg_tokens.input_ids.shape[1])
+            print(f"len negative_prompt after tokenizer: {len(negative_prompt)}")
+            print("max_length: ", max_length)
+            # Encode both with same max_length
+            text_embeddings = self.encode_text(prompt, max_length=max_length)
+            uncond_embeddings = self.encode_text(negative_prompt, max_length=max_length)
+            print(f"text_embedding shape: {text_embeddings.shape}, uncond_shape: {uncond_embeddings.shape}")
             # Concatenate for batch processing
-            text_embeddings = torch.cat([uncond_embeddings, text_embeddings])           
+            text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
+            
             # Duplicate latents for CFG
             latents = torch.cat([latents] * 2)
         else:
@@ -298,7 +308,6 @@ class UShapeMambaDiffusion(nn.Module):
         # Denoising loop
         for i, t in enumerate(timesteps):
             # Expand timestep for batch
-            print(f"latents shape: {latents.shape}, t_shape: {t_batch.shape}, context_shape: {text_embeddings.shape} ")
             t_batch = torch.full((latents.shape[0],), t, device=self.device, dtype=torch.long)
             
             # Predict noise
@@ -309,6 +318,7 @@ class UShapeMambaDiffusion(nn.Module):
             if guidance_scale > 1.0:
                 noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
                 noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+                
                 # Use only conditional latents for next step
                 latents = latents.chunk(2)[1]
             
