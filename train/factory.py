@@ -106,10 +106,11 @@ class OptimizerSchedulerFactory:
         schedulers = []
         milestones = []
         total_iters_accum = 0
-
+        
         for i, sched_cfg in enumerate(sequence):
             name = sched_cfg['name']
             sched_kwargs = {k: v for k, v in sched_cfg.items() if k != 'name'}
+            total_iters_scale = config.Train.Dataset.train_subset / (config.Train.batch_size * config.Optimizer.grad_acc)
 
             scheduler_cls = globals().get(name, None)
             if scheduler_cls is None:
@@ -117,9 +118,16 @@ class OptimizerSchedulerFactory:
                 if scheduler_cls is None:
                     raise ValueError(f"Unknown scheduler class: {name}")
 
-            total_iters = sched_kwargs.get('total_iters', None) #change this line
+            total_iters = sched_kwargs.get('total_iters', None)
+            if total_iters is not None:
+                total_iters = int(total_iters * total_iters_scale)
+                sched_kwargs['total_iters'] = total_iters
+            if 'T_0' in sched_kwargs:
+                sched_kwargs['T_0'] = int(sched_kwargs['T_0'] * total_iters_scale)
+                debug_log(f"T_0 : {sched_kwargs['T_0']}")
+                
             constructor_args = inspect.signature(scheduler_cls.__init__).parameters
-            debug_log(f"scheduler_name: {name} has total_iters: {total_iters}")
+            debug_log(f"scheduler_name: {name} has total_iters: {total_iters} steps")
 
             if total_iters is not None:
                 if 'total_iters' not in constructor_args:
