@@ -212,6 +212,7 @@ class UShapeMamba(nn.Module):
 
         for i in range(4):
             out_ch = model_channels * (2 ** i)  # 160, 320, 640, 1280
+            print(f"UpBlock {i}: in_channels={in_ch}, out_channels={out_ch}")
             self.down_blocks.append(
                 DownBlock(in_ch, out_ch, time_embed_dim, context_dim, config)
             )
@@ -229,7 +230,7 @@ class UShapeMamba(nn.Module):
         for i, skip_ch in enumerate(skip_channels):
             # Dynamically compute out_ch to mirror down path
             out_ch = skip_channels[i + 1] if i < len(skip_channels) - 1 else model_channels
-
+            print(f"UpBlock {i}: in_channels={up_in_channels}, out_channels={out_ch}")
             self.up_blocks.append(
                 UpBlock(up_in_channels, out_ch, skip_ch, time_embed_dim, context_dim, config)
             )
