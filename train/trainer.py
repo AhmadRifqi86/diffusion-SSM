@@ -61,6 +61,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
             'scaler_state_dict': self.scaler.state_dict() if hasattr(self, 'scaler') else None,
             'scheduler_state_dict': self.scheduler.state_dict(),
             'val_loss': val_loss,
+            'best_loss': self.best_loss,
             'lr': self.learning_rates,
             'train_indices': train_indices,
             'val_indices': val_indices
@@ -86,12 +87,12 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
         self.start_epoch = checkpoint.get('epoch', 0) + 1
-        self.best_loss = checkpoint.get('val_loss', float('inf'))
+        self.best_loss = checkpoint.get('best_loss', checkpoint.get('val_loss', 1.0))
         self.learning_rates = checkpoint.get('lr', [])
         print(f"✅ Resumed training from {checkpoint_path} at epoch {self.start_epoch}, last loss: {self.best_loss:.4f}")
         return checkpoint
 
-    def training_step(self, batch):
+    def training_step(self, batch): #perlu ditest: checkpointing dengan best_val_loss setelah resume
         """Single training step with autocast, EMA, Min-SNR, grad clipping"""
         images, text_prompts = batch
         timesteps = torch.randint(

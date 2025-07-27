@@ -19,7 +19,7 @@ Optimizer:  #seems adamW config still kinda wrong,
   init_lr: 1e-6
   warmup_ratio: 0.05
   Adamw:
-    base_lr: 5e-5
+    base_lr: 5e-5  #might change to 2e-5
     weight_decay: 0.01
   Autocast: true
   ParamGroups:
@@ -35,7 +35,7 @@ Optimizer:  #seems adamW config still kinda wrong,
     scale_shift:
       lr_scale: 2.0
       weight_decay: 0.005
-    vae_proj:
+    input_proj:
       lr_scale: 1.0
       weight_decay: 0.005
     context_proj:
@@ -69,7 +69,7 @@ Train:
   Checkpoint:
     enabled: true #false  #true
     checkpoint_dir: "cp_advancedTrain"  # or "checkpoints_cosineAnneal" or "checkpoints_cosineDecay"
-    checkpoint_path: "cp_advancedTrain/cp_epoch13.pt"  # null  # or "checkpoints/last.pt"
+    checkpoint_path: "cp_advancedTrain/cp_epoch3.pt"  # null  # or "checkpoints/last.pt"
   EarlyStopping:
     patience: 10   #in epochs
     min_progress: 0.001
