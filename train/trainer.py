@@ -9,6 +9,7 @@ from models.blocks import CrossAttention
 import logging
 from train.factory import OptimizerSchedulerFactory
 from tqdm import tqdm
+from tools.debug import debug_log
 import os
 from torch.utils.data import DataLoader
 
@@ -25,15 +26,17 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         self.ema_model = EMAModel(model, decay=0.9999)
         self.gradient_accumulation_steps = config.Optimizer.get('grad_acc', 1)  # Default to 1 if not set
         # Multi-component optimizer
-        self.early_stop = EarlyStopping(patience=20, min_delta=1e-4, restore_best_weights=True)
+        self.early_stop = EarlyStopping(patience=config.Train.EarlyStopping.patience, 
+                                            min_delta=config.Train.EarlyStopping.min_delta, restore_best_weights=True)
         
         self.optimizer = OptimizerSchedulerFactory.create_advanced_optimizer(self.model, config)
         self.scheduler = OptimizerSchedulerFactory.create_advanced_scheduler(self.optimizer, config)
 
         # Gradient management
         self.grad_clipper = GradientClipperWithNormTracking(max_norm=1.0)
-        self.scaler = GradScaler(enabled=torch.cuda.is_available()) # if dtype for train is FP16, else no need for GradScale 
-
+        #self.scaler = GradScaler(enabled=torch.cuda.is_available()) # if dtype for train is FP16, else no need for GradScale 
+        self.amp_dtype, self.scaler = OptimizerSchedulerFactory.get_amp_type(config)
+        debug_log(f"amp_dtype: {self.amp_dtype}")
         # Loss tracking
         self.loss_history = []
         self.val_loss_history = []
@@ -106,7 +109,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         if not hasattr(self, '_accum_count'):
             self._accum_count = 0
         
-        with autocast(device_type="cuda"):
+        with autocast(device_type="cuda",dtype=self.amp_dtype):
             predicted_noise, noise, latents = self.model(images, timesteps, text_prompts)
             target = self.model.noise_scheduler.get_v_target(latents, noise, timesteps) if self.use_v_param else noise
             
@@ -119,9 +122,13 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
             loss = loss / self.gradient_accumulation_steps
         
         # Backward pass
-        self.scaler.scale(loss).backward()
+        #self.scaler.scale(loss).backward()
+        if self.scaler is not None:
+            self.scaler.scale(loss).backward()
+        else:
+            loss.backward()
+
         self._accum_count += 1
-        
         # Default values
         grad_norm = 0.0
         is_update_step = False
@@ -129,8 +136,11 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         # Optimizer step when accumulation is complete
         if self._accum_count >= self.gradient_accumulation_steps:
             grad_norm = self.grad_clipper.clip_gradients(self.model)
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            if self.scaler is not None:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                self.optimizer.step()
             self.optimizer.zero_grad()
             
             # Update EMA and scheduler
@@ -187,36 +197,8 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
                 total_val_loss += loss.item()
                 num_batches += 1
             # === Inference Sample ===
-            if epoch % 10 == 0:
-                try:
-                    sample_image = images[0].unsqueeze(0)  # [1, C, H, W]
-                    sample_prompt = text_prompts[0]
-
-                    sampled = self.model.sample(
-                        sample_prompt,
-                        height=self.config.Train.Dataset.img_size,
-                        width=self.config.Train.Dataset.img_size,
-                        num_inference_steps=self.config.Validate.denoise_step,
-                        guidance_scale=self.config.Validate.guidance_scale
-                    )  # shape: [1, C, H, W], assumed in [0, 1]
-
-                    import matplotlib.pyplot as plt
-                    import torchvision.transforms.functional as TF
-
-                    # Detach, move to CPU, convert to numpy
-                    img_tensor = sampled.squeeze(0).detach().cpu()
-                    img_np = TF.to_pil_image(img_tensor)
-
-                    # Display image
-                    plt.figure(figsize=(4, 4))
-                    plt.imshow(img_np)
-                    plt.axis('off')
-                    plt.title(f"Epoch {epoch} Prompt: {sample_prompt}")
-                    plt.show()
-                except Exception as e:
-                    import traceback
-                    print(f"⚠️  Failed to generate/display sample image during validation: {e}")
-                    traceback.print_exc()
+            if epoch % 12 == 0:
+                self._sample_image(images, text_prompts, epoch)
         # === End Inference Sample ===
         avg_val_loss = total_val_loss / max(1, num_batches)
         self.val_loss_history.append(avg_val_loss)
@@ -231,6 +213,39 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         self.model.train()
         self.ema_model.restore()  # <<< Restore raw model weights
         return avg_val_loss
+    
+    def _sample_image(self, images, text_prompts, epoch):
+        try:
+            sample_image = images[0].unsqueeze(0)  # [1, C, H, W]
+            sample_prompt = text_prompts[0]
+
+            sampled = self.model.sample(
+                sample_prompt,
+                height=self.config.Train.Dataset.img_size,
+                width=self.config.Train.Dataset.img_size,
+                num_inference_steps=self.config.Validate.denoise_step,
+                guidance_scale=self.config.Validate.guidance_scale
+            )  # shape: [1, C, H, W], assumed in [0, 1]
+
+            import matplotlib.pyplot as plt
+            import torchvision.transforms.functional as TF
+
+                    # Detach, move to CPU, convert to numpy
+            img_tensor = sampled.squeeze(0).detach().cpu()
+            img_np = TF.to_pil_image(img_tensor)
+
+                    # Display image
+            plt.figure(figsize=(4, 4))
+            plt.imshow(img_np)
+            plt.axis('off')
+            plt.title(f"Epoch {epoch} Prompt: {sample_prompt}")
+            plt.show(block=False)
+            plt.pause(0.001)
+            plt.close()  # Optional: closes the window after displaying
+        except Exception as e:
+            import traceback
+            print(f"⚠️  Failed to generate/display sample image during validation: {e}")
+            traceback.print_exc()
 
     def train(self, config, val_loader=None):
         device = next(self.model.parameters()).device

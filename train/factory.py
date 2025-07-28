@@ -1,6 +1,7 @@
 import torch
 import torch.optim as optim
 from torch.optim import AdamW
+from torch.amp import GradScaler
 from torch.optim.lr_scheduler import LinearLR, SequentialLR
 import torch.optim.lr_scheduler as torch_sched
 import inspect
@@ -39,6 +40,24 @@ class OptimizerSchedulerFactory:
     def create_model(config):
         config = OptimizerSchedulerFactory.load_config(config)
         return UShapeMambaDiffusion(config).to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+    
+    @staticmethod
+    def get_amp_type(self,config):
+        if config.Optimizer.get("Autocast", True):
+            amp_dtype = config.Optimizer.get("amp_dtype", "fp16").lower()
+            if amp_dtype == "fp16":
+                mixed_precision_dtype = torch.float16
+                scaler = GradScaler()
+            elif amp_dtype == "bf16":
+                mixed_precision_dtype = torch.bfloat16
+                scaler = None  # no need for GradScaler
+            else:
+                raise ValueError(f"Unsupported amp_dtype: {amp_dtype}")
+        else:
+            mixed_precision_dtype = torch.float32
+            scaler = None
+        
+        return mixed_precision_dtype,scaler
 
     @staticmethod
     def create_advanced_optimizer(model, config):

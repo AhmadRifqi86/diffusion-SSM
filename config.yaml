@@ -18,48 +18,48 @@ Model:
 
 Optimizer:  #seems adamW config still kinda wrong,
   init_lr: 5e-7  #1e-6
-  warmup_ratio: 0.05
-  grad_acc: 1 #gradient accumulation steps, set to 1 if not using grad_acc
+  grad_acc: 4 #gradient accumulation steps, set to 1 if not using grad_acc
+  amp_dtype: "fp16"
   Adamw:  #add beta_1 and beta_2
-    base_lr: 2.5e-5  #might change to 1e-5
-    weight_decay: 0.01
-  Autocast: true
-  ParamGroups:  #change the lr_scale and weight_decay to match the model
+    base_lr: 1.2e-5  #might change to 1.5e-5
+    weight_decay: 0.008
+    betas: [0.9, 0.95]
+  ParamGroups:
     mamba_block:
-      lr_scale: 1.5
-      weight_decay: 0.01
+      lr_scale: 2.0            # Increase core learning
+      weight_decay: 0.005
     CrossAttention:
-      lr_scale: 1.3
-      weight_decay: 0.01
+      lr_scale: 1.8            # Increase cross-modal learning
+      weight_decay: 0.005
     time_embed:
-      lr_scale: 2.0
-      weight_decay: 0.005
+      lr_scale: 2.5            # Keep high
+      weight_decay: 0.004
     scale_shift:
-      lr_scale: 2.0
-      weight_decay: 0.005
+      lr_scale: 2.5            # Keep high
+      weight_decay: 0.004
     input_proj:
-      lr_scale: 1.0
-      weight_decay: 0.005
+      lr_scale: 0.6            # Reduce frozen interface
+      weight_decay: 0.01
     context_proj:
-      lr_scale: 1.0
-      weight_decay: 0.005
+      lr_scale: 0.6            # Reduce frozen interface
+      weight_decay: 0.01
 
 Scheduler:
   sequence: #total_iters ini enaknya sebagai epoch atau step ya? enakan epoch sih, mungkin disini epoch, tapi di create_scheduler jadi step
     - name: LinearLR
       end_factor: 1.0
-      total_iters: 10 #25000 #in steps, not epochs, maybe calculated based on warmup_ratio, ini setara 10 epoch
+      total_iters: 16 #25000 #in steps, not epochs, maybe calculated based on warmup_ratio, ini setara 10 epoch
     - name: CosineAnnealingWarmRestartsWithDecay   #match exact class name
-      T_0: 20 #50000  #number of step before first restart, train_subset size * num_epochs / (batch_size * grad_acc), set equal to 20 epoch, maybe change to 30 epoch initial
-      freq_mult: 1.3  #frequency multiplier for subsequent restarts
-      eta_min: 1e-6  #minimum learning rate
+      T_0: 40 #50000  #number of step before first restart, train_subset size * num_epochs / (batch_size * grad_acc), set equal to 20 epoch, maybe change to 30 epoch initial
+      freq_mult: 1.0  #frequency multiplier for subsequent restarts
+      eta_min: 1e-7  #minimum learning rate
       total_iters: 200 #500000   # Used for milestone only
 
 #Kalo pake gradient accumulation, be careful with total_iters setting
 Train:
   use_v_parameterization: true
-  batch_size: 4
-  num_epochs: 200
+  batch_size: 16
+  num_epochs: 216
   num_workers: 2
   Dataset:
     img_size: 256
@@ -67,16 +67,16 @@ Train:
     val_dataset: "/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/val2017"
     train_annotations: "/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_train2017.json"
     val_annotations: "/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json"
-    train_subset: 1000 #10000
-    val_subset: 100 #500
+    train_subset: 10000 #10000
+    val_subset: 500 #500
   Checkpoint:
     enabled: true #false  #true
     checkpoint_dir: "cp_advancedTrain"  # or "checkpoints_cosineAnneal" or "checkpoints_cosineDecay"
-    checkpoint_path: null #"cp_advancedTrain/cp_epoch3.pt"  # null  # or "checkpoints/last.pt"
-    best_checkpoint_path: "cp_advancedTrain/best_checkpoint_test.pt"  # "checkpoints/best.pt"
+    checkpoint_path: "cp_advancedTrain/cp_epoch6.pt"  # null  # or "checkpoints/last.pt"
+    best_checkpoint_path: "best_checkpoint_test.pt"  # "checkpoints/best.pt"
   EarlyStopping:
-    patience: 10   #in epochs
-    min_progress: 0.001
+    patience: 25   #in epochs
+    min_delta: 0.0001
 
 Validate:
   denoise_step: 50
