@@ -42,7 +42,7 @@ class OptimizerSchedulerFactory:
         return UShapeMambaDiffusion(config).to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
     
     @staticmethod
-    def get_amp_type(self,config):
+    def get_amp_type(config):
         if config.Optimizer.get("Autocast", True):
             amp_dtype = config.Optimizer.get("amp_dtype", "fp16").lower()
             if amp_dtype == "fp16":

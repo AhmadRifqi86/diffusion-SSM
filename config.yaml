@@ -72,7 +72,7 @@ Train:
   Checkpoint:
     enabled: true #false  #true
     checkpoint_dir: "cp_advancedTrain"  # or "checkpoints_cosineAnneal" or "checkpoints_cosineDecay"
-    checkpoint_path: "cp_advancedTrain/cp_epoch6.pt"  # null  # or "checkpoints/last.pt"
+    checkpoint_path: "cp_advancedTrain/cp_epoch85.pt"  # null  # or "checkpoints/last.pt"
     best_checkpoint_path: "best_checkpoint_test.pt"  # "checkpoints/best.pt"
   EarlyStopping:
     patience: 25   #in epochs

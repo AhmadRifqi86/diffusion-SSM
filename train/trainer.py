@@ -240,7 +240,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
             plt.axis('off')
             plt.title(f"Epoch {epoch} Prompt: {sample_prompt}")
             plt.show(block=False)
-            plt.pause(0.001)
+            plt.pause(60)
             plt.close()  # Optional: closes the window after displaying
         except Exception as e:
             import traceback
