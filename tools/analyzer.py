@@ -724,7 +724,49 @@ class ComprehensiveDiffusionMambaAnalyzer:
             hook.remove()
         self.hooks = []
         self.activations = {}
-
+        
+## How to use
+# def enhanced_training_step(self, batch):
+#         """Enhanced training step with comprehensive analysis"""
+#         images, text_prompts = batch
+#         timesteps = torch.randint(0, 1000, (images.shape[0],), device=images.device)
+        
+        # # Forward pass (your existing code)
+        # with torch.autocast(device_type="cuda"):
+        #     predicted_noise, noise, latents = self.model(images, timesteps, text_prompts)
+        #     # Your loss computation here
+        #     loss = self.compute_loss(predicted_noise, noise, latents, timesteps)
+        
+        # # Backward pass
+        # self.scaler.scale(loss).backward()
+        
+        # # ANALYZER INTEGRATION - This is the key part!
+        # analysis_result = self.analyzer.analyze_step(
+        #     loss=loss.item(), 
+        #     timesteps=timesteps
+        # )
+        
+        # # If analysis suggests major issues, you can take action
+        # if analysis_result and "high" in analysis_result:
+        #     suggestions = self.analyzer.suggest_optimizations()
+        #     if suggestions.get('priority') == 'high':
+        #         print("⚠️ High priority issues detected!")
+        #         print(analysis_result)
+                
+        #         # Optionally adjust learning rates on the fly
+        #         self.apply_lr_suggestions(suggestions.get('learning_rates', {}))
+        
+        # # Continue with optimization
+        # self.scaler.step(self.optimizer)
+        # self.scaler.update()
+        # self.optimizer.zero_grad()
+        
+        # self.current_step += 1
+        
+        # return {
+        #     'loss': loss.item(),
+        #     'analysis': analysis_result
+        # }
 
 # """
 # HOW TO INTERPRET ANALYSIS RESULTS AND IMPROVE TRAINING:

@@ -65,6 +65,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scaler_state_dict': self.scaler.state_dict() if hasattr(self, 'scaler') else None,
             'scheduler_state_dict': self.scheduler.state_dict(),
+            'val_loss_history': self.val_loss_history,
             'val_loss': val_loss,
             'best_loss': self.best_loss,
             'lr': self.learning_rates,
@@ -94,6 +95,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         self.start_epoch = checkpoint.get('epoch', 0) + 1
         self.best_loss = checkpoint.get('best_loss', checkpoint.get('val_loss', 1.0))
         self.learning_rates = checkpoint.get('lr', [])
+        self.val_loss_history = checkpoint.get('val_loss_history', [])
         print(f"✅ Resumed training from {checkpoint_path} at epoch {self.start_epoch}, last loss: {self.best_loss:.4f}")
         return checkpoint
 
