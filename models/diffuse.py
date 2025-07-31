@@ -287,15 +287,15 @@ class UShapeMambaDiffusion(nn.Module):
         if guidance_scale > 1.0:
             # Tokenize both to get max length needed
             prompt_tokens = self.clip_tokenizer(prompt, padding=True, truncation=True, return_tensors="pt")
-            print(f"len negative_prompt before tokenizer: {len(negative_prompt)}")
+            #print(f"len negative_prompt before tokenizer: {len(negative_prompt)}")
             neg_tokens = self.clip_tokenizer(negative_prompt, padding=True, truncation=True, return_tensors="pt")
             max_length = max(prompt_tokens.input_ids.shape[1], neg_tokens.input_ids.shape[1])
-            print(f"len negative_prompt after tokenizer: {len(negative_prompt)}")
-            print("max_length: ", max_length)
+            #print(f"len negative_prompt after tokenizer: {len(negative_prompt)}")
+            #print("max_length: ", max_length)
             # Encode both with same max_length
             text_embeddings = self.encode_text(prompt, max_length=max_length)
             uncond_embeddings = self.encode_text(negative_prompt, max_length=max_length)
-            print(f"text_embedding shape: {text_embeddings.shape}, uncond_shape: {uncond_embeddings.shape}")
+            #print(f"text_embedding shape: {text_embeddings.shape}, uncond_shape: {uncond_embeddings.shape}")
             # Concatenate for batch processing
             text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
             

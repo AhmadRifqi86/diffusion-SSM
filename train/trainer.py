@@ -36,7 +36,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         self.grad_clipper = GradientClipperWithNormTracking(max_norm=1.0)
         #self.scaler = GradScaler(enabled=torch.cuda.is_available()) # if dtype for train is FP16, else no need for GradScale 
         self.amp_dtype, self.scaler = OptimizerSchedulerFactory.get_amp_type(config)
-        debug_log(f"amp_dtype: {self.amp_dtype}")
+        #debug_log(f"amp_dtype: {self.amp_dtype}")
         # Loss tracking
         self.loss_history = []
         self.val_loss_history = []
@@ -47,6 +47,8 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         self.start_epoch = 0
         self.checkpoint_dir = config.Train.Checkpoint.checkpoint_dir #ganti jadi config aja
         self.logger = logging.getLogger(__name__)
+
+        
 
 
     def checkpoint(self, save_path, epoch, val_loss, train_indices=None, val_indices=None):
@@ -223,8 +225,8 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
                 sample_prompt,
                 height=self.config.Train.Dataset.img_size,
                 width=self.config.Train.Dataset.img_size,
-                num_inference_steps=self.config.Validate.denoise_step,
-                guidance_scale=self.config.Validate.guidance_scale
+                num_inference_steps=self.config.Test.Validate.denoise_step,
+                guidance_scale=self.config.Test.Validate.guidance_scale
             )  # shape: [1, C, H, W], assumed in [0, 1]
 
             import matplotlib.pyplot as plt
