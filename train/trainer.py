@@ -10,6 +10,7 @@ import logging
 from train.factory import OptimizerSchedulerFactory
 from tqdm import tqdm
 from tools.debug import debug_log
+from tools.analyzer import ComprehensiveAnalyzer
 import os
 from torch.utils.data import DataLoader
 
@@ -21,6 +22,7 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
     def __init__(self, model: UShapeMambaDiffusion, config):
         self.model = model
         self.config = config or {}
+        self.base_lr = config.Optimizer.Adamw.base_lr
         self.use_v_param = config.Train.use_v_parameterization
         self.criterion = MinSNRVLoss(gamma=5.0)
         self.ema_model = EMAModel(model, decay=0.9999)
@@ -48,8 +50,9 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
         self.checkpoint_dir = config.Train.Checkpoint.checkpoint_dir #ganti jadi config aja
         self.logger = logging.getLogger(__name__)
 
-        
-
+        self.analyzer = ComprehensiveAnalyzer(model, self.base_lr)
+        self.analyzer.register_hooks()
+    
 
     def checkpoint(self, save_path, epoch, val_loss, train_indices=None, val_indices=None):
         """
@@ -131,6 +134,15 @@ class AdvancedDiffusionTrainer:  #Resuming nya belom kalau pake indices dataset
             self.scaler.scale(loss).backward()
         else:
             loss.backward()
+        
+        actual_loss = loss.item() * self.gradient_accumulation_steps
+        analysis_result = self.analyzer.analyze_step(
+            loss=actual_loss,
+            timesteps=timesteps
+        )
+
+        if analysis_result is not None:
+            print("Analysis result: ", analysis_result)
 
         self._accum_count += 1
         # Default values

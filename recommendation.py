@@ -1053,3 +1053,372 @@ def update_optimizer_from_suggestions(optimizer, suggestions):
             new_lr_scale = suggestions[group_name]
             param_group['lr'] = param_group['base_lr'] * new_lr_scale
             print(f"Updated {group_name} LR from {old_lr:.2e} to {param_group['lr']:.2e}")
+
+
+
+def training_step(self, batch):
+    """Clean training step with analyzer monitoring only"""
+    images, text_prompts = batch
+    timesteps = torch.randint(
+        0, self.model.noise_scheduler.num_train_timesteps,
+        (images.shape[0],), device=images.device
+    )
+    images = images.to(next(self.model.parameters()).device)
+    timesteps = timesteps.to(next(self.model.parameters()).device)
+    
+    # Initialize analyzer once (non-intrusive)
+    if not hasattr(self, 'analyzer'):
+        base_lr = self.optimizer.param_groups[0]['lr']
+        self.analyzer = ComprehensiveDiffusionMambaAnalyzer(self.model, base_lr=base_lr)
+        self.analyzer.register_hooks()
+        print("📊 Training analyzer initialized (monitoring mode)")
+    
+    # Track accumulation steps
+    if not hasattr(self, '_accum_count'):
+        self._accum_count = 0
+    
+    with autocast(device_type="cuda", dtype=self.amp_dtype):
+        predicted_noise, noise, latents = self.model(images, timesteps, text_prompts)
+        target = self.model.noise_scheduler.get_v_target(latents, noise, timesteps) if self.use_v_param else noise
+        predicted_noise = predicted_noise.float()
+        target = target.float()
+        snr = self.model.noise_scheduler.snr[timesteps.to(self.model.noise_scheduler.snr.device)].to(images.device).float()
+        loss = self.criterion(predicted_noise, target, timesteps, snr)
+        
+        # Normalize loss
+        loss = loss / self.gradient_accumulation_steps
+    
+    # Backward pass
+    if self.scaler is not None:
+        self.scaler.scale(loss).backward()
+    else:
+        loss.backward()
+    
+    # ANALYZER MONITORING - Just analyze and report
+    actual_loss = loss.item() * self.gradient_accumulation_steps
+    analysis_result = self.analyzer.analyze_step(
+        loss=actual_loss,
+        timesteps=timesteps
+    )
+    
+    self._accum_count += 1
+    
+    # Default values
+    grad_norm = 0.0
+    is_update_step = False
+    
+    # Optimizer step when accumulation is complete
+    if self._accum_count >= self.gradient_accumulation_steps:
+        grad_norm = self.grad_clipper.clip_gradients(self.model)
+        
+        if self.scaler is not None:
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            self.optimizer.step()
+        
+        self.optimizer.zero_grad()
+        
+        # Update EMA and scheduler
+        self.ema_model.update()
+        self.scheduler.step()
+        
+        # Reset counter
+        self._accum_count = 0
+        is_update_step = True
+    
+    # Logging
+    self.loss_history.append(actual_loss)
+    if is_update_step:
+        self.learning_rates.append(self.optimizer.param_groups[0]['lr'])
+    
+    # Return with optional analysis info
+    result = {
+        'loss': actual_loss,
+        'grad_norm': grad_norm.item() if hasattr(grad_norm, 'item') else grad_norm,
+        'lr': self.optimizer.param_groups[0]['lr'],
+        'optimizer_step': is_update_step
+    }
+    
+    # Add analysis results when available (every 500 steps)
+    if analysis_result:
+        result['analysis_report'] = analysis_result
+        result['has_analysis'] = True
+    
+    return result
+
+
+class TrainingMonitor:
+    """
+    Separate class to handle analysis results and generate alerts
+    This keeps your training loop clean while providing rich monitoring
+    """
+    
+    def __init__(self, alert_thresholds=None):
+        self.alert_thresholds = alert_thresholds or {
+            'gradient_explosion': 1e-1,
+            'gradient_vanishing': 1e-7,
+            'dead_neuron_ratio': 0.3,
+            'loss_increase_steps': 50,
+            'lr_effectiveness_threshold': 1e-6
+        }
+        
+        self.alert_history = []
+        self.last_alert_step = 0
+        self.alert_cooldown = 100  # Don't spam alerts
+    
+    def process_training_metrics(self, step, metrics, analyzer=None):
+        """Process training metrics and generate informative alerts"""
+        alerts = []
+        
+        # Handle analysis reports
+        if metrics.get('has_analysis') and analyzer:
+            diagnosis = analyzer.diagnose_training_health()
+            suggestions = analyzer.suggest_optimizations()
+            
+            # Generate smart alerts based on analysis
+            alerts.extend(self._generate_health_alerts(diagnosis, step))
+            alerts.extend(self._generate_suggestion_alerts(suggestions, step))
+            
+            # Check for emergency conditions
+            emergency_alerts = self._check_emergency_conditions(diagnosis, step)
+            if emergency_alerts:
+                alerts.extend(emergency_alerts)
+        
+        # Always check basic metrics
+        basic_alerts = self._check_basic_metrics(metrics, step)
+        alerts.extend(basic_alerts)
+        
+        # Display alerts with cooldown
+        if alerts and (step - self.last_alert_step) > self.alert_cooldown:
+            self._display_alerts(step, alerts)
+            self.last_alert_step = step
+        
+        return alerts
+    
+    def _generate_health_alerts(self, diagnosis, step):
+        """Generate alerts based on health diagnosis"""
+        alerts = []
+        
+        if diagnosis['overall_status'] == 'needs_attention':
+            alerts.append({
+                'type': 'warning',
+                'message': f"Training health needs attention ({len(diagnosis['issues'])} issues detected)",
+                'details': diagnosis['issues'][:3],  # Show top 3 issues
+                'step': step
+            })
+        
+        # Component-specific alerts
+        for component, status in diagnosis.get('gradient_health', {}).items():
+            if status in ['vanishing_gradients', 'exploding_gradients']:
+                alerts.append({
+                    'type': 'critical' if 'exploding' in status else 'warning',
+                    'message': f"{component.replace('_', ' ').title()}: {status.replace('_', ' ')}",
+                    'component': component,
+                    'step': step
+                })
+        
+        return alerts
+    
+    def _generate_suggestion_alerts(self, suggestions, step):
+        """Generate alerts based on optimization suggestions"""
+        alerts = []
+        
+        if suggestions.get('priority') == 'high':
+            lr_changes = suggestions.get('learning_rates', {})
+            if lr_changes:
+                components_needing_change = list(lr_changes.keys())
+                alerts.append({
+                    'type': 'action_needed',
+                    'message': f"High priority: Consider adjusting learning rates for {', '.join(components_needing_change)}",
+                    'details': [f"{comp}: {info['current']:.2f} → {info['suggested']:.2f}" 
+                              for comp, info in lr_changes.items()],
+                    'step': step
+                })
+        
+        # Architecture suggestions
+        if suggestions.get('architecture'):
+            alerts.append({
+                'type': 'info',
+                'message': "Architecture optimization suggested",
+                'details': suggestions['architecture'][:2],  # Show top 2
+                'step': step
+            })
+        
+        return alerts
+    
+    def _check_emergency_conditions(self, diagnosis, step):
+        """Check for conditions that require immediate attention"""
+        alerts = []
+        
+        # Count critical issues
+        critical_issues = []
+        for category, issues in diagnosis.items():
+            if isinstance(issues, dict):
+                for component, status in issues.items():
+                    if status in ['exploding_gradients', 'dead_neurons', 'excessive_learning']:
+                        critical_issues.append(f"{category}.{component}: {status}")
+        
+        if len(critical_issues) >= 3:
+            alerts.append({
+                'type': 'emergency',
+                'message': f"EMERGENCY: {len(critical_issues)} critical issues detected!",
+                'details': critical_issues[:3],
+                'action': "Consider stopping training and investigating",
+                'step': step
+            })
+        
+        return alerts
+    
+    def _check_basic_metrics(self, metrics, step):
+        """Check basic metrics for issues"""
+        alerts = []
+        
+        # Gradient norm checks
+        grad_norm = metrics.get('grad_norm', 0)
+        if grad_norm > self.alert_thresholds['gradient_explosion']:
+            alerts.append({
+                'type': 'critical',
+                'message': f"Gradient explosion detected: {grad_norm:.2e}",
+                'action': "Consider gradient clipping or lower learning rate",
+                'step': step
+            })
+        elif grad_norm < self.alert_thresholds['gradient_vanishing']:
+            alerts.append({
+                'type': 'warning',
+                'message': f"Very small gradients: {grad_norm:.2e}",
+                'action': "Consider higher learning rate",
+                'step': step
+            })
+        
+        return alerts
+    
+    def _display_alerts(self, step, alerts):
+        """Display alerts in a clean, informative format"""
+        if not alerts:
+            return
+        
+        # Group alerts by type
+        emergency_alerts = [a for a in alerts if a['type'] == 'emergency']
+        critical_alerts = [a for a in alerts if a['type'] == 'critical']
+        warning_alerts = [a for a in alerts if a['type'] == 'warning']
+        action_alerts = [a for a in alerts if a['type'] == 'action_needed']
+        info_alerts = [a for a in alerts if a['type'] == 'info']
+        
+        print(f"\n{'='*60}")
+        print(f"📊 TRAINING ANALYSIS ALERT - Step {step}")
+        print(f"{'='*60}")
+        
+        # Emergency alerts (red)
+        for alert in emergency_alerts:
+            print(f"🚨 EMERGENCY: {alert['message']}")
+            if alert.get('details'):
+                for detail in alert['details']:
+                    print(f"   • {detail}")
+            if alert.get('action'):
+                print(f"   → {alert['action']}")
+        
+        # Critical alerts (red)
+        for alert in critical_alerts:
+            print(f"🔥 CRITICAL: {alert['message']}")
+            if alert.get('action'):
+                print(f"   → {alert['action']}")
+        
+        # Warning alerts (yellow)
+        for alert in warning_alerts:
+            print(f"⚠️  WARNING: {alert['message']}")
+            if alert.get('details'):
+                for detail in alert['details'][:2]:  # Limit details
+                    print(f"   • {detail}")
+        
+        # Action needed (blue)
+        for alert in action_alerts:
+            print(f"🔧 ACTION NEEDED: {alert['message']}")
+            if alert.get('details'):
+                for detail in alert['details'][:3]:
+                    print(f"   • {detail}")
+        
+        # Info alerts (green)
+        for alert in info_alerts:
+            print(f"💡 INFO: {alert['message']}")
+        
+        print(f"{'='*60}\n")
+        
+        # Store alert for history
+        self.alert_history.append({
+            'step': step,
+            'alert_count': len(alerts),
+            'emergency_count': len(emergency_alerts),
+            'critical_count': len(critical_alerts)
+        })
+
+
+# Usage example in your training loop
+def enhanced_training_loop(self):
+    """Example training loop with clean monitoring"""
+    
+    # Initialize monitor
+    monitor = TrainingMonitor()
+    
+    for epoch in range(self.num_epochs):
+        for batch_idx, batch in enumerate(self.dataloader):
+            
+            # Your clean training step
+            metrics = self.training_step(batch)
+            
+            # Process metrics and generate alerts
+            alerts = monitor.process_training_metrics(
+                step=batch_idx + epoch * len(self.dataloader),
+                metrics=metrics,
+                analyzer=getattr(self, 'analyzer', None)
+            )
+            
+            # Simple logging
+            if batch_idx % 100 == 0:
+                status = "🔥" if any(a['type'] == 'critical' for a in alerts) else "✅"
+                print(f"{status} Epoch {epoch}, Step {batch_idx}: "
+                      f"Loss={metrics['loss']:.4f}, "
+                      f"GradNorm={metrics['grad_norm']:.2e}, "
+                      f"LR={metrics['lr']:.2e}")
+            
+            # Save analysis reports when generated
+            if metrics.get('has_analysis'):
+                report_path = f'analysis_reports/report_epoch_{epoch}_step_{batch_idx}.txt'
+                with open(report_path, 'w') as f:
+                    f.write(metrics['analysis_report'])
+            
+            # Optional: Generate plots periodically
+            if batch_idx % 1000 == 0 and hasattr(self, 'analyzer'):
+                self.analyzer.plot_training_metrics(
+                    f'plots/training_epoch_{epoch}_step_{batch_idx}.png'
+                )
+    
+    # Final summary
+    if hasattr(self, 'analyzer'):
+        print("\n🏁 Training completed. Generating final analysis...")
+        final_report = self.analyzer.generate_comprehensive_report()
+        
+        # Save final analysis
+        with open('final_analysis_report.txt', 'w') as f:
+            f.write(final_report)
+        
+        self.analyzer.export_metrics('final_metrics.json')
+        self.analyzer.cleanup()
+        print("📊 Final analysis saved to 'final_analysis_report.txt'")
+
+
+# Simple alert-only integration (even cleaner)
+def minimal_integration_example(self):
+    """Minimal integration - just add these 3 lines to your existing training loop"""
+    
+    # In your existing training loop, just add:
+    for batch_idx, batch in enumerate(self.dataloader):
+        metrics = self.training_step(batch)  # Your existing function
+        
+        # Add just these 3 lines for monitoring:
+        if batch_idx == 0:  # Initialize once
+            self.monitor = TrainingMonitor()
+        
+        alerts = self.monitor.process_training_metrics(batch_idx, metrics, getattr(self, 'analyzer', None))
+        
+        # That's it! Alerts will be displayed automatically when issues are detected

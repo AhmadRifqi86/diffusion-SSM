@@ -8,7 +8,7 @@ from typing import Dict, List, Tuple, Optional, Any
 import warnings
 import json
 
-class ComprehensiveDiffusionMambaAnalyzer:
+class ComprehensiveAnalyzer:
     """
     Unified analyzer for comprehensive diffusion-mamba model analysis and troubleshooting.
     Combines activation analysis, gradient flow, learning effectiveness, and training diagnostics.
@@ -34,8 +34,8 @@ class ComprehensiveDiffusionMambaAnalyzer:
         
         # Analysis state
         self.step_count = 0
-        self.analysis_interval = 50
-        self.report_interval = 500
+        self.analysis_interval = 20  #50
+        self.report_interval = 100  #500
         
         # Learning rate scales for different components
         self.lr_scales = {

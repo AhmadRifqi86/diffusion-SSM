@@ -21,7 +21,7 @@ Optimizer:  #seems adamW config still kinda wrong,
   grad_acc: 4 #gradient accumulation steps, set to 1 if not using grad_acc
   amp_dtype: "fp16"
   Adamw:  #add beta_1 and beta_2
-    base_lr: 1.2e-5  #might change to 1.5e-5
+    base_lr: 1.5e-5  #might change to 1.5e-5
     weight_decay: 0.008
     betas: [0.9, 0.95]
   ParamGroups:
@@ -67,10 +67,10 @@ Train:
     val_dataset: "/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/val2017"
     train_annotations: "/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_train2017.json"
     val_annotations: "/home/arifadh/Desktop/Skripsi-Magang-Proyek/coco2017/annotations/captions_val2017.json"
-    train_subset: 10000 #10000
-    val_subset: 500 #500
+    train_subset: 500 #10000
+    val_subset: 50 #500
   Checkpoint:
-    enabled: true #false  #true
+    enabled: false #false  #true
     checkpoint_dir: "cp_advancedTrain"  # or "checkpoints_cosineAnneal" or "checkpoints_cosineDecay"
     checkpoint_path: "cp_advancedTrain/cp_epoch85.pt"  # null  # or "checkpoints/last.pt"
     best_checkpoint_path: "best_checkpoint_test.pt"  # "checkpoints/best.pt"
